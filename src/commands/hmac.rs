@@ -54,10 +54,16 @@ pub fn encrypt(file: &Path, slot: u8, out: &Output, serial: Option<u32>) -> Resu
 }
 
 pub fn decrypt(file: &Path, slot: u8, out: &Output, serial: Option<u32>) -> Result<()> {
-    let base = strip_encrypted_suffix(file)
-        .with_context(|| format!("cannot determine the challenge name for {}", file.display()))?;
-    let challenge_path = PathBuf::from(format!("{}.challenge", base.display()));
-    let default_output = base;
+    // The challenge sits next to the input with only the last extension
+    // swapped: FILE.yk.enc becomes FILE.yk.challenge.
+    let challenge_path = match file.extension() {
+        Some(ext) if ext == "enc" || ext == "age" => file.with_extension("challenge"),
+        _ => bail!(
+            "cannot determine the challenge file for {} (expected .enc or .age)",
+            file.display()
+        ),
+    };
+    let default_output = output_base(file);
 
     if !challenge_path.is_file() {
         bail!("challenge file not found: {}", challenge_path.display());
@@ -124,14 +130,15 @@ fn challenge_path_for(main_path: &Path) -> PathBuf {
     main_path.with_file_name(format!("{stem}.challenge"))
 }
 
-fn strip_encrypted_suffix(file: &Path) -> Option<PathBuf> {
+/// `FILE.yk.enc` and `FILE.enc` become `FILE`; anything else gets `.decrypted`.
+fn output_base(file: &Path) -> PathBuf {
     let name = file.to_string_lossy();
     for suffix in [".yk.enc", ".yk.age", ".enc", ".age"] {
         if let Some(base) = name.strip_suffix(suffix) {
-            return Some(PathBuf::from(base));
+            return PathBuf::from(base);
         }
     }
-    None
+    PathBuf::from(format!("{name}.decrypted"))
 }
 
 fn random_challenge() -> Result<Vec<u8>> {
