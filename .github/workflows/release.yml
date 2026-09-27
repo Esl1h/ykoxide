@@ -13,28 +13,23 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            cross_extra: ''
+            runner: ubuntu-latest
+          # Native runner: pcsc-sys and hidapi find the target's libpcsclite
+          # and libudev through pkg-config, which refuses to cross-compile.
           - target: aarch64-unknown-linux-gnu
-            cross_extra: 'gcc-aarch64-linux-gnu'
-    runs-on: ubuntu-latest
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libpcsclite-dev libudev-dev pkg-config ${{ matrix.cross_extra }}
-      - name: Add Rust target
-        run: rustup target add ${{ matrix.target }}
+          sudo apt-get install -y libpcsclite-dev libudev-dev pkg-config
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
       - name: Build
-        run: |
-          # The aarch64 build needs the GNU linker from the cross package.
-          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
-            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
-          fi
-          cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }}
       - name: Package
         run: |
           dir="ykoxide-${GITHUB_REF_NAME#v}-${{ matrix.target }}"
