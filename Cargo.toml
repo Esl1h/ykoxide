@@ -1,0 +1,21 @@
+[package]
+name = "ykoxide"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "YubiKey toolkit: age, PIV and challenge-response file encryption in a single binary"
+license = "MIT"
+repository = "https://github.com/Esl1h/ykoxide"
+
+[[bin]]
+name = "ykox"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
