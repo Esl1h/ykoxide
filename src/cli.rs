@@ -30,6 +30,8 @@ pub enum Command {
         /// age identity file (repeatable); defaults to the one from `age setup`
         #[arg(short, long)]
         identity: Vec<PathBuf>,
+        #[command(flatten)]
+        slot: Slot,
     },
     /// Export the YubiKey configuration state as JSON
     Backup {

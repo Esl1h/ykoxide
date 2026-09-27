@@ -292,3 +292,82 @@ fn decrypt_without_age_extension_uses_decrypted_suffix() {
         "renamed\n"
     );
 }
+
+#[test]
+fn verify_passes_for_a_valid_age_file() {
+    let dir = TempDir::new().unwrap();
+    let (identity, recipient) = make_identity(&dir);
+    let plaintext = write_plaintext(&dir, "v.txt", "verify me\n");
+    let encrypted = dir.path().join("v.txt.age");
+
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .args([
+            "age",
+            "encrypt",
+            &plaintext,
+            "-r",
+            &recipient,
+            "-o",
+            encrypted.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .args(["verify", encrypted.to_str().unwrap(), "-i", &identity])
+        .assert()
+        .success()
+        .stderr(contains("decrypts"));
+}
+
+#[test]
+fn verify_fails_for_a_tampered_file() {
+    let dir = TempDir::new().unwrap();
+    let (identity, recipient) = make_identity(&dir);
+    let plaintext = write_plaintext(&dir, "t.txt", "tamper me\n");
+    let encrypted = dir.path().join("t.txt.age");
+
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .args([
+            "age",
+            "encrypt",
+            &plaintext,
+            "-r",
+            &recipient,
+            "-o",
+            encrypted.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // Flip one byte in the last chunk.
+    let mut data = std::fs::read(&encrypted).unwrap();
+    let last = data.len() - 1;
+    data[last] ^= 0xff;
+    std::fs::write(&encrypted, &data).unwrap();
+
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .args(["verify", encrypted.to_str().unwrap(), "-i", &identity])
+        .assert()
+        .failure()
+        .code(1);
+}
+
+#[test]
+fn verify_reports_unknown_format() {
+    let dir = TempDir::new().unwrap();
+    let garbage = dir.path().join("g.bin");
+    std::fs::write(&garbage, b"definitely not an encrypted file").unwrap();
+
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .args(["verify", garbage.to_str().unwrap()])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(contains("unknown file format"));
+}

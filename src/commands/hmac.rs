@@ -54,37 +54,8 @@ pub fn encrypt(file: &Path, slot: u8, out: &Output, serial: Option<u32>) -> Resu
 }
 
 pub fn decrypt(file: &Path, slot: u8, out: &Output, serial: Option<u32>) -> Result<()> {
-    // The challenge sits next to the input with only the last extension
-    // swapped: FILE.yk.enc becomes FILE.yk.challenge.
-    let challenge_path = match file.extension() {
-        Some(ext) if ext == "enc" || ext == "age" => file.with_extension("challenge"),
-        _ => bail!(
-            "cannot determine the challenge file for {} (expected .enc or .age)",
-            file.display()
-        ),
-    };
     let default_output = output_base(file);
-
-    if !challenge_path.is_file() {
-        bail!("challenge file not found: {}", challenge_path.display());
-    }
-
-    let challenge_raw = std::fs::read_to_string(&challenge_path)
-        .with_context(|| format!("failed to read {}", challenge_path.display()))?;
-    // Legacy challenges were written with echo, so trim spaces and the newline.
-    let challenge_hex = challenge_raw.trim();
-    let raw_challenge = hex::decode(challenge_hex)
-        .with_context(|| format!("challenge in {} is not valid hex", challenge_path.display()))?;
-    if raw_challenge.len() != 32 {
-        bail!(
-            "challenge in {} has {} bytes, expected 32",
-            challenge_path.display(),
-            raw_challenge.len()
-        );
-    }
-
-    let response = otp::challenge_response(slot, &raw_challenge, serial)?;
-    let response_hex = hex::encode(*response);
+    let (challenge_hex, response_hex) = load_challenge_response(file, slot, serial)?;
 
     let mut input =
         std::fs::File::open(file).with_context(|| format!("failed to open {}", file.display()))?;
@@ -97,14 +68,13 @@ pub fn decrypt(file: &Path, slot: u8, out: &Output, serial: Option<u32>) -> Resu
     let mut reader = Cursor::new(prefix.clone()).chain(input);
 
     let dest = if prefix.starts_with(legacy::MAGIC) {
-        let passphrase = legacy::derive_passphrase(challenge_hex, &response_hex);
+        let passphrase = legacy::derive_passphrase(&challenge_hex, &response_hex);
         let mut output = io::Output::create(Some(default_output.clone()), out.force)?;
         legacy::decrypt(&mut reader, passphrase.as_bytes(), output.writer())?;
         output.finish()?;
         default_output
     } else if prefix.starts_with(b"age-encryption.org/v1") {
-        let passphrase = SecretString::from(response_hex);
-        let identity = scrypt::Identity::new(passphrase);
+        let identity = scrypt_identity(&response_hex);
         let decryptor = Decryptor::new(&mut reader)
             .with_context(|| format!("{} is not a valid age file", file.display()))?;
         let mut plaintext = decryptor.decrypt(std::iter::once(&identity as &_))?;
@@ -118,6 +88,49 @@ pub fn decrypt(file: &Path, slot: u8, out: &Output, serial: Option<u32>) -> Resu
 
     ui::success(format!("Decrypted: {}", dest.display()));
     Ok(())
+}
+
+/// Reads the challenge next to `file` and asks the YubiKey for the HMAC
+/// response; returns (challenge hex, response hex).
+pub(crate) fn load_challenge_response(
+    file: &Path,
+    slot: u8,
+    serial: Option<u32>,
+) -> Result<(String, String)> {
+    // The challenge sits next to the input with only the last extension
+    // swapped: FILE.yk.enc becomes FILE.yk.challenge.
+    let challenge_path = match file.extension() {
+        Some(ext) if ext == "enc" || ext == "age" => file.with_extension("challenge"),
+        _ => bail!(
+            "cannot determine the challenge file for {} (expected .enc or .age)",
+            file.display()
+        ),
+    };
+    if !challenge_path.is_file() {
+        bail!("challenge file not found: {}", challenge_path.display());
+    }
+
+    let challenge_raw = std::fs::read_to_string(&challenge_path)
+        .with_context(|| format!("failed to read {}", challenge_path.display()))?;
+    // Legacy challenges were written with echo, so trim spaces and the newline.
+    let challenge_hex = challenge_raw.trim().to_owned();
+    let raw_challenge = hex::decode(&challenge_hex)
+        .with_context(|| format!("challenge in {} is not valid hex", challenge_path.display()))?;
+    if raw_challenge.len() != 32 {
+        bail!(
+            "challenge in {} has {} bytes, expected 32",
+            challenge_path.display(),
+            raw_challenge.len()
+        );
+    }
+
+    let response = otp::challenge_response(slot, &raw_challenge, serial)?;
+    let response_hex = hex::encode(*response);
+    Ok((challenge_hex, response_hex))
+}
+
+pub(crate) fn scrypt_identity(response_hex: &str) -> scrypt::Identity {
+    scrypt::Identity::new(SecretString::from(response_hex.to_owned()))
 }
 
 /// `FILE.yk.age` becomes `FILE.yk.challenge`; the challenge always sits next

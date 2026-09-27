@@ -15,7 +15,7 @@ use crate::ui;
 
 /// age plugin UI: messages on stderr, secrets via a no-echo prompt.
 #[derive(Clone, Copy)]
-struct PluginCallbacks;
+pub(crate) struct PluginCallbacks;
 
 impl Callbacks for PluginCallbacks {
     fn display_message(&self, message: &str) {
@@ -71,8 +71,32 @@ pub fn encrypt(file: &Path, recipients: Vec<String>, out: &Output) -> Result<()>
 }
 
 pub fn decrypt(file: &Path, identities: Vec<PathBuf>, out: &Output) -> Result<()> {
+    let ids = load_identities(&identities)?;
+
+    let mut reader =
+        decryptor_for(file)?.decrypt(ids.iter().map(|i| i.as_ref() as &dyn Identity))?;
+
+    let dest = io::destination(
+        out.output.as_deref(),
+        file,
+        &OutputRule::StripOrAppend {
+            ext: "age",
+            fallback: "decrypted",
+        },
+    );
+    let mut output = io::Output::create(dest, out.force)?;
+    copy(&mut reader, output.writer())?;
+    output.finish()?;
+    Ok(())
+}
+
+/// Resolves identities from arguments and configuration files, warning about
+/// touch when a plugin identity is present.
+pub(crate) fn load_identities(
+    identity_args: &[PathBuf],
+) -> Result<Vec<Box<dyn Identity + Send + Sync>>> {
     let dir = config::config_dir()?;
-    let entries = config::resolve_identities(&dir, &identities)?;
+    let entries = config::resolve_identities(&dir, identity_args)?;
 
     let mut ids: Vec<Box<dyn Identity + Send + Sync>> = Vec::new();
     let mut has_plugin = false;
@@ -93,24 +117,15 @@ pub fn decrypt(file: &Path, identities: Vec<PathBuf>, out: &Output) -> Result<()
     if has_plugin {
         ui::info("Touch your YubiKey if it blinks");
     }
+    Ok(ids)
+}
 
+/// A decryptor over the whole file, binary or armored.
+pub(crate) type AgeDecryptor = Decryptor<ArmoredReader<BufReader<std::fs::File>>>;
+
+pub(crate) fn decryptor_for(file: &Path) -> Result<AgeDecryptor> {
     let input =
         std::fs::File::open(file).with_context(|| format!("failed to open {}", file.display()))?;
-    let decryptor = Decryptor::new(ArmoredReader::new(BufReader::new(input)))
-        .with_context(|| format!("{} is not an age file", file.display()))?;
-
-    let mut reader = decryptor.decrypt(ids.iter().map(|i| i.as_ref() as &dyn Identity))?;
-
-    let dest = io::destination(
-        out.output.as_deref(),
-        file,
-        &OutputRule::StripOrAppend {
-            ext: "age",
-            fallback: "decrypted",
-        },
-    );
-    let mut output = io::Output::create(dest, out.force)?;
-    copy(&mut reader, output.writer())?;
-    output.finish()?;
-    Ok(())
+    Decryptor::new(ArmoredReader::new(input))
+        .with_context(|| format!("{} is not a valid age file", file.display()))
 }
