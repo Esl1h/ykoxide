@@ -1,0 +1,67 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+env:
+  BIN: ykox
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            cross_extra: ''
+          - target: aarch64-unknown-linux-gnu
+            cross_extra: 'gcc-aarch64-linux-gnu'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpcsclite-dev libudev-dev pkg-config ${{ matrix.cross_extra }}
+      - name: Add Rust target
+        run: rustup target add ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Build
+        run: |
+          # The aarch64 build needs the GNU linker from the cross package.
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+          fi
+          cargo build --release --target ${{ matrix.target }}
+      - name: Package
+        run: |
+          dir="ykoxide-${GITHUB_REF_NAME#v}-${{ matrix.target }}"
+          mkdir -p "$dir"
+          cp target/${{ matrix.target }}/release/${BIN} "$dir"/
+          cp README.md LICENSE "$dir"/
+          tar czf "${dir}.tar.gz" "$dir"
+          sha256sum "${dir}.tar.gz" >> SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            ykoxide-*.tar.gz
+            SHA256SUMS
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+      - name: Merge checksums
+        run: cat release-*/SHA256SUMS > SHA256SUMS
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-*/ykoxide-*.tar.gz
+            SHA256SUMS
