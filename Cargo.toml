@@ -14,8 +14,13 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+yubikey = "0.8.0"
 
 [profile.release]
 lto = true
 codegen-units = 1
 strip = true
+
+[dev-dependencies]
+assert_cmd = "2.2.2"
+predicates = "3.1.4"
