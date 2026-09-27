@@ -6,14 +6,15 @@ mod config;
 mod device;
 mod format;
 mod io;
+mod rfc3339;
 mod ui;
 
 use std::process::ExitCode;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use clap::Parser;
 
-use cli::{AgeCommand, Cli, Command, HmacCommand};
+use cli::{AgeCommand, Cli, Command, HmacCommand, Output};
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -68,7 +69,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 return Ok(ExitCode::FAILURE);
             }
         }
-        Command::Backup { .. } => bail!("`backup` is not implemented yet"),
+        Command::Backup { output, force } => {
+            commands::backup::run(cli.serial, &Output { output, force })?
+        }
     }
     Ok(ExitCode::SUCCESS)
 }

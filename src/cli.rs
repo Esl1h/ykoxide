@@ -38,6 +38,9 @@ pub enum Command {
         /// Output file; defaults to stdout
         #[arg(short, long)]
         output: Option<PathBuf>,
+        /// Overwrite the output file if it exists
+        #[arg(long)]
+        force: bool,
     },
 }
 

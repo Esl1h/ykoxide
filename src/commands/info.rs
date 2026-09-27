@@ -1,15 +1,15 @@
 use anyhow::{Context as _, Result};
 use yubikey::certificate::Certificate;
-use yubikey::piv::{RetiredSlotId, SlotId, metadata};
-use yubikey::{Serial, Version, YubiKey};
+use yubikey::piv::{SlotId, metadata};
+use yubikey::{Serial, YubiKey};
 
-use crate::device::piv;
+use crate::device::{self, piv};
 use crate::ui;
 
 pub fn run(serial: Option<Serial>) -> Result<()> {
     // List before opening: dropping a PC/SC connection resets the card and
     // would invalidate a session that is already open.
-    let devices = piv::list()?;
+    let devices = device::list()?;
     let target = match serial {
         Some(serial) => devices
             .iter()
@@ -34,45 +34,33 @@ pub fn run(serial: Option<Serial>) -> Result<()> {
         .find(|d| d.serial == target)
         .expect("serial came from this list");
 
-    let mut yk = piv::open(Some(target))?;
+    let mut yk = device::open(Some(target))?;
     ui::info(format!(
         "{} (serial {}, firmware {}, reader {})",
         summary.name, summary.serial, summary.version, summary.reader,
     ));
 
-    let supports_metadata = metadata_supported(summary.version);
+    let supports_metadata = piv::metadata_supported(summary.version);
     for (slot, label) in slots() {
         print_slot(&mut yk, slot, &label, supports_metadata);
     }
     Ok(())
 }
 
-fn metadata_supported(version: Version) -> bool {
-    // Slot metadata arrived with firmware 5.2.3; only report it from 5.3 on.
-    (version.major, version.minor) >= (5, 3)
-}
-
 fn slots() -> Vec<(SlotId, String)> {
-    let mut slots = vec![
-        (SlotId::Authentication, "9a authentication".to_string()),
-        (SlotId::Signature, "9c signature".to_string()),
-        (SlotId::KeyManagement, "9d key management".to_string()),
-        (
-            SlotId::CardAuthentication,
-            "9e card authentication".to_string(),
-        ),
-    ];
-    for raw in 0x82..=0x95u8 {
-        let Ok(retired) = RetiredSlotId::try_from(raw) else {
-            continue;
-        };
-        let index = raw - 0x82 + 1;
-        slots.push((
-            SlotId::Retired(retired),
-            format!("{raw:02x} retired {index}"),
-        ));
-    }
-    slots
+    piv::all_piv_slots()
+        .into_iter()
+        .map(|(slot, hex)| match hex.as_str() {
+            "9a" => (slot, "9a authentication".to_string()),
+            "9c" => (slot, "9c signature".to_string()),
+            "9d" => (slot, "9d key management".to_string()),
+            "9e" => (slot, "9e card authentication".to_string()),
+            raw => {
+                let index = u8::from_str_radix(raw, 16).unwrap_or(0) - 0x82 + 1;
+                (slot, format!("{raw} retired {index}"))
+            }
+        })
+        .collect()
 }
 
 fn print_slot(yk: &mut YubiKey, slot: SlotId, label: &str, supports_metadata: bool) {

@@ -2,7 +2,7 @@
 name = "ykoxide"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.89"
 description = "YubiKey toolkit: age, PIV and challenge-response file encryption in a single binary"
 license = "MIT"
 repository = "https://github.com/Esl1h/ykoxide"
@@ -12,18 +12,22 @@ name = "ykox"
 path = "src/main.rs"
 
 [dependencies]
-aes = "0.9.2"
+aes = "0.9.3"
 age = { version = "0.12.1", features = ["armor", "cli-common", "plugin"] }
 anyhow = "1"
 cbc = { version = "0.2.1", features = ["alloc"] }
 challenge_response = { version = "0.5.46", default-features = false, features = ["nusb"] }
 clap = { version = "4", features = ["derive"] }
+ctap-hid-fido2 = "3.5.9"
 dirs = "7.0.0"
 hex = "0.4.3"
 hmac = "0.13.0"
 pbkdf2 = "0.13.0"
+pcsc = "2.9.0"
 rpassword = "7.5.4"
 secrecy = "0.10.3"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
 sha2 = "0.11.0"
 tempfile = "3.27.0"
 yubikey = "0.8.0"
