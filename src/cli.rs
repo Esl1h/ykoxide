@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use yubikey::Serial;
 
 #[derive(Parser)]
@@ -44,7 +44,23 @@ pub enum Command {
 #[derive(Subcommand)]
 pub enum AgeCommand {
     /// Generate an age identity on the YubiKey PIV applet
-    Setup,
+    Setup {
+        /// Generate a new identity, overwriting the target slot
+        #[arg(long)]
+        generate: bool,
+        /// Retired PIV slot (1 to 20) where the identity lives
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..=20))]
+        slot: u8,
+        /// Touch policy for the generated key
+        #[arg(long, value_enum, default_value_t = PolicyArg::Cached)]
+        touch_policy: PolicyArg,
+        /// PIN policy for the generated key
+        #[arg(long, value_enum, default_value_t = PolicyArg::Once)]
+        pin_policy: PolicyArg,
+        /// Overwrite existing configuration files
+        #[arg(long)]
+        force: bool,
+    },
     /// Encrypt a file to one or more recipients
     Encrypt {
         file: PathBuf,
@@ -63,6 +79,26 @@ pub enum AgeCommand {
         #[command(flatten)]
         out: Output,
     },
+}
+
+/// Policies shared by touch and PIN (the plugin accepts the same words).
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum PolicyArg {
+    Always,
+    Cached,
+    Once,
+    Never,
+}
+
+impl PolicyArg {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Always => "always",
+            Self::Cached => "cached",
+            Self::Once => "once",
+            Self::Never => "never",
+        }
+    }
 }
 
 #[derive(Subcommand)]

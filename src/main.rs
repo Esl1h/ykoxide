@@ -30,7 +30,19 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<ExitCode> {
     match cli.command {
         Command::Info => commands::info::run(cli.serial)?,
-        Command::Age(AgeCommand::Setup) => bail!("`age setup` is not implemented yet"),
+        Command::Age(AgeCommand::Setup {
+            generate,
+            slot,
+            touch_policy,
+            pin_policy,
+            force,
+        }) => commands::age::setup(&commands::age::SetupOpts {
+            generate,
+            slot,
+            touch_policy: touch_policy.as_str(),
+            pin_policy: pin_policy.as_str(),
+            force,
+        })?,
         Command::Age(AgeCommand::Encrypt {
             file,
             recipient,

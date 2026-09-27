@@ -6,7 +6,7 @@ use age::secrecy::SecretString;
 use age::{
     Callbacks, Decryptor, Encryptor, Identity, IdentityFile, Recipient, armor::ArmoredReader,
 };
-use anyhow::{Context as _, Error, Result};
+use anyhow::{Context as _, Error, Result, bail};
 
 use crate::cli::Output;
 use crate::config;
@@ -128,4 +128,181 @@ pub(crate) fn decryptor_for(file: &Path) -> Result<AgeDecryptor> {
         std::fs::File::open(file).with_context(|| format!("failed to open {}", file.display()))?;
     Decryptor::new(ArmoredReader::new(input))
         .with_context(|| format!("{} is not a valid age file", file.display()))
+}
+
+/// Options for `age setup`, mirroring the plugin's CLI.
+pub struct SetupOpts {
+    pub generate: bool,
+    pub slot: u8,
+    pub touch_policy: &'static str,
+    pub pin_policy: &'static str,
+    pub force: bool,
+}
+
+pub fn setup(opts: &SetupOpts) -> Result<()> {
+    let dir = config::config_dir()?;
+    let (identity, recipient) = match opts.generate {
+        false => reuse(opts)?,
+        true => generate(opts)?,
+    };
+
+    write_config(&dir, &identity, &recipient, opts.force)?;
+    ui::success("Identity saved.");
+    // The recipient is data; it goes to stdout.
+    println!("{recipient}");
+    ui::info("The private key lives inside the YubiKey; it was never on disk.");
+    Ok(())
+}
+
+fn reuse(opts: &SetupOpts) -> Result<(String, String)> {
+    let list = run_plugin(&["--list"])?;
+    let recipient = first_line_starting(&list, "age1").with_context(|| {
+        format!("no age identity found on the YubiKey; pass --generate to create one on retired slot {}", opts.slot)
+    })?;
+    extract_identity(opts, recipient)
+}
+
+fn extract_identity(opts: &SetupOpts, recipient: &str) -> Result<(String, String)> {
+    let out = run_plugin(&["--identity", "--slot", &opts.slot.to_string()])?;
+    let identity = first_line_starting(&out, "AGE-PLUGIN-YUBIKEY-").with_context(|| {
+        format!(
+            "failed to extract the identity from slot {}; check that the slot holds a key",
+            opts.slot
+        )
+    })?;
+    Ok((identity.to_owned(), recipient.to_owned()))
+}
+
+fn generate(opts: &SetupOpts) -> Result<(String, String)> {
+    let piv_slot = 0x81u8 + opts.slot;
+    ui::warn(format!(
+        "This will OVERWRITE the existing key in PIV retired slot {} ({piv_slot:02x}).",
+        opts.slot
+    ));
+    ui::warn("Any data encrypted to the current key will be UNRECOVERABLE.");
+    let answer = ui::prompt_public("[?] Type 'YES' to confirm: ")?;
+    if answer != "YES" {
+        ui::info("Aborted.");
+        anyhow::bail!("generation aborted");
+    }
+
+    ui::info("Touch YubiKey if it blinks. PIN may be required.");
+    run_plugin(&[
+        "--generate",
+        "--slot",
+        &opts.slot.to_string(),
+        "--name",
+        "yk-toolkit",
+        "--touch-policy",
+        opts.touch_policy,
+        "--pin-policy",
+        opts.pin_policy,
+    ])?;
+
+    ui::info("Extracting new identity from YubiKey...");
+    let list = run_plugin(&["--list"])?;
+    let recipient = first_line_starting(&list, "age1")
+        .context("generation finished but no recipient found in the list")?;
+    extract_identity(opts, recipient)
+}
+
+fn run_plugin(args: &[&str]) -> Result<String> {
+    let output = std::process::Command::new("age-plugin-yubikey")
+        .args(args)
+        .output()
+        .with_context(|| {
+            "age-plugin-yubikey not found in PATH; install it with 'cargo install age-plugin-yubikey --locked'"
+        })?;
+    if !output.status.success() {
+        bail!(
+            "age-plugin-yubikey {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn first_line_starting<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    text.lines().map(str::trim).find(|l| l.starts_with(prefix))
+}
+
+/// Writes the two configuration files with the script's permissions:
+/// directory 0700, identity 0600, recipient 0644.
+pub(crate) fn write_config(dir: &Path, identity: &str, recipient: &str, force: bool) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let identity_path = dir.join(config::YUBIKEY_IDENTITY_FILE);
+    let recipient_path = dir.join(config::YUBIKEY_RECIPIENT_FILE);
+    for path in [&identity_path, &recipient_path] {
+        if path.exists() && !force {
+            bail!(
+                "configuration file already exists: {} (use --force)",
+                path.display()
+            );
+        }
+    }
+
+    std::fs::create_dir_all(dir).with_context(|| format!("failed to create {}", dir.display()))?;
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+        .with_context(|| format!("failed to set permissions on {}", dir.display()))?;
+
+    std::fs::write(&identity_path, format!("{identity}\n"))
+        .with_context(|| format!("failed to write {}", identity_path.display()))?;
+    std::fs::set_permissions(&identity_path, std::fs::Permissions::from_mode(0o600))?;
+
+    std::fs::write(&recipient_path, format!("{recipient}\n"))
+        .with_context(|| format!("failed to write {}", recipient_path.display()))?;
+    std::fs::set_permissions(&recipient_path, std::fs::Permissions::from_mode(0o644))?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn write_config_sets_script_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        write_config(dir.path(), "AGE-PLUGIN-YUBIKEY-1", "age1yubikey1", false).unwrap();
+
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(dir.path()), 0o700);
+        assert_eq!(mode(&dir.path().join(config::YUBIKEY_IDENTITY_FILE)), 0o600);
+        assert_eq!(
+            mode(&dir.path().join(config::YUBIKEY_RECIPIENT_FILE)),
+            0o644
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(config::YUBIKEY_IDENTITY_FILE)).unwrap(),
+            "AGE-PLUGIN-YUBIKEY-1\n"
+        );
+    }
+
+    #[test]
+    fn write_config_refuses_overwrite_without_force() {
+        let dir = tempfile::tempdir().unwrap();
+        write_config(dir.path(), "AGE-PLUGIN-YUBIKEY-1", "age1yubikey1", false).unwrap();
+        let err =
+            write_config(dir.path(), "AGE-PLUGIN-YUBIKEY-2", "age1yubikey2", false).unwrap_err();
+        assert!(err.to_string().contains("use --force"));
+
+        write_config(dir.path(), "AGE-PLUGIN-YUBIKEY-2", "age1yubikey2", true).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(config::YUBIKEY_IDENTITY_FILE)).unwrap(),
+            "AGE-PLUGIN-YUBIKEY-2\n"
+        );
+    }
+
+    #[test]
+    fn first_line_starting_skips_comments_and_blanks() {
+        let text = "# comment\n\n  AGE-PLUGIN-YUBIKEY-1\nother";
+        assert_eq!(
+            first_line_starting(text, "AGE-PLUGIN-"),
+            Some("AGE-PLUGIN-YUBIKEY-1")
+        );
+        assert_eq!(first_line_starting(text, "age1"), None);
+    }
 }
