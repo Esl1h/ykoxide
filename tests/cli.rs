@@ -1,4 +1,28 @@
+use std::io::Write;
+use std::process::Command as SysCommand;
+use std::str::FromStr;
+
+use age::armor::{ArmoredWriter, Format};
+use age::secrecy::ExposeSecret;
+use age::{Encryptor, Recipient, x25519};
 use assert_cmd::Command;
+use predicates::str::contains;
+use tempfile::TempDir;
+
+/// Generates a fresh age X25519 identity and returns (identity file path, recipient string).
+fn make_identity(dir: &TempDir) -> (String, String) {
+    let identity = x25519::Identity::generate();
+    let path = dir.path().join("identity.txt");
+    std::fs::write(&path, format!("{}\n", identity.to_string().expose_secret())).unwrap();
+    let recipient = identity.to_public().to_string();
+    (path.display().to_string(), recipient)
+}
+
+fn write_plaintext(dir: &TempDir, name: &str, content: &str) -> String {
+    let path = dir.path().join(name);
+    std::fs::write(&path, content).unwrap();
+    path.display().to_string()
+}
 
 #[test]
 fn info_help_exits_zero() {
@@ -20,4 +44,251 @@ fn serial_flag_is_accepted() {
         // usage error (code 2) is not.
         .failure()
         .code(1);
+}
+
+#[test]
+fn encrypt_decrypt_round_trip() {
+    let dir = TempDir::new().unwrap();
+    let (identity, recipient) = make_identity(&dir);
+    let plaintext = write_plaintext(&dir, "plain.txt", "round trip content\n");
+    let encrypted = dir.path().join("plain.txt.age");
+    let decrypted = dir.path().join("out.txt");
+
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .args([
+            "age",
+            "encrypt",
+            &plaintext,
+            "-r",
+            &recipient,
+            "-o",
+            encrypted.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert!(encrypted.exists());
+
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .args([
+            "age",
+            "decrypt",
+            encrypted.to_str().unwrap(),
+            "-i",
+            &identity,
+            "-o",
+            decrypted.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert_eq!(
+        std::fs::read_to_string(&decrypted).unwrap(),
+        "round trip content\n"
+    );
+}
+
+#[test]
+fn decrypt_accepts_armored_input() {
+    let dir = TempDir::new().unwrap();
+    let (identity, recipient) = make_identity(&dir);
+
+    // Produce an armored age file with the age library directly.
+    let _key =
+        x25519::Identity::from_str(std::fs::read_to_string(&identity).unwrap().trim()).unwrap();
+    let recipient_key: Box<dyn Recipient + Send> =
+        Box::new(x25519::Recipient::from_str(&recipient).unwrap());
+    let encryptor =
+        Encryptor::with_recipients(std::iter::once(&*recipient_key as &dyn Recipient)).unwrap();
+    let armored_path = dir.path().join("armored.txt.age");
+    let file = std::fs::File::create(&armored_path).unwrap();
+    let mut writer = encryptor
+        .wrap_output(ArmoredWriter::wrap_output(file, Format::AsciiArmor).unwrap())
+        .unwrap();
+    writer.write_all(b"armored content\n").unwrap();
+    let armored = writer.finish().unwrap();
+    armored.finish().unwrap();
+
+    let decrypted = dir.path().join("armored.out");
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .args([
+            "age",
+            "decrypt",
+            armored_path.to_str().unwrap(),
+            "-i",
+            &identity,
+            "-o",
+            decrypted.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert_eq!(
+        std::fs::read_to_string(&decrypted).unwrap(),
+        "armored content\n"
+    );
+}
+
+#[test]
+fn default_output_is_input_with_age_extension() {
+    let dir = TempDir::new().unwrap();
+    let (_, recipient) = make_identity(&dir);
+    let plaintext = write_plaintext(&dir, "plain2.txt", "content\n");
+
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .args(["age", "encrypt", &plaintext, "-r", &recipient])
+        .assert()
+        .success();
+    assert!(dir.path().join("plain2.txt.age").exists());
+}
+
+#[test]
+fn existing_output_fails_without_force_and_overwrites_with_force() {
+    let dir = TempDir::new().unwrap();
+    let (_, recipient) = make_identity(&dir);
+    let plaintext = write_plaintext(&dir, "plain3.txt", "content\n");
+    let encrypted = dir.path().join("plain3.txt.age");
+    std::fs::write(&encrypted, "stale").unwrap();
+
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .args([
+            "age",
+            "encrypt",
+            &plaintext,
+            "-r",
+            &recipient,
+            "-o",
+            encrypted.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("output already exists"));
+
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .args([
+            "age",
+            "encrypt",
+            &plaintext,
+            "-r",
+            &recipient,
+            "-o",
+            encrypted.to_str().unwrap(),
+            "--force",
+        ])
+        .assert()
+        .success();
+    assert!(
+        std::fs::read(&encrypted)
+            .unwrap()
+            .starts_with(b"age-encryption.org/v1")
+    );
+}
+
+#[test]
+fn output_dash_writes_to_stdout() {
+    let dir = TempDir::new().unwrap();
+    let (_, recipient) = make_identity(&dir);
+    let plaintext = write_plaintext(&dir, "plain4.txt", "stdout content\n");
+
+    let output = SysCommand::new(env!("CARGO_BIN_EXE_ykox"))
+        .args(["age", "encrypt", &plaintext, "-r", &recipient, "-o", "-"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(output.stdout.starts_with(b"age-encryption.org/v1"));
+}
+
+#[test]
+fn garbage_input_decrypt_fails_cleanly() {
+    let dir = TempDir::new().unwrap();
+    let (identity, _) = make_identity(&dir);
+    let garbage = dir.path().join("garbage.bin");
+    std::fs::write(&garbage, b"not an age file at all").unwrap();
+
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .args(["age", "decrypt", garbage.to_str().unwrap(), "-i", &identity])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn decrypt_default_output_strips_age_extension() {
+    let dir = TempDir::new().unwrap();
+    let (identity, recipient) = make_identity(&dir);
+    let plaintext = write_plaintext(&dir, "plain5.txt", "default out\n");
+    let encrypted = dir.path().join("plain5.txt.age");
+
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .args([
+            "age",
+            "encrypt",
+            &plaintext,
+            "-r",
+            &recipient,
+            "-o",
+            encrypted.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // Decrypting back to the original path hits the overwrite convention.
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .args([
+            "age",
+            "decrypt",
+            encrypted.to_str().unwrap(),
+            "-i",
+            &identity,
+            "--force",
+        ])
+        .assert()
+        .success();
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("plain5.txt")).unwrap(),
+        "default out\n"
+    );
+}
+
+#[test]
+fn decrypt_without_age_extension_uses_decrypted_suffix() {
+    let dir = TempDir::new().unwrap();
+    let (identity, recipient) = make_identity(&dir);
+    let plaintext = write_plaintext(&dir, "plain6-source.txt", "renamed\n");
+    let encrypted = dir.path().join("plain6.bin");
+
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .args([
+            "age",
+            "encrypt",
+            &plaintext,
+            "-r",
+            &recipient,
+            "-o",
+            encrypted.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .args([
+            "age",
+            "decrypt",
+            encrypted.to_str().unwrap(),
+            "-i",
+            &identity,
+        ])
+        .assert()
+        .success();
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("plain6.bin.decrypted")).unwrap(),
+        "renamed\n"
+    );
 }
