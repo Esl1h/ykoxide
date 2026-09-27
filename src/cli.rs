@@ -1,10 +1,15 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
+use yubikey::Serial;
 
 #[derive(Parser)]
 #[command(name = "ykox", version, about)]
 pub struct Cli {
+    /// Use only the YubiKey with this serial number
+    #[arg(long, global = true)]
+    pub serial: Option<Serial>,
+
     #[command(subcommand)]
     pub command: Command,
 }
