@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod age_yubikey;
 mod cli;
 mod commands;
 mod config;

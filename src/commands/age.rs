@@ -8,6 +8,7 @@ use age::{
 };
 use anyhow::{Context as _, Error, Result, bail};
 
+use crate::age_yubikey;
 use crate::cli::Output;
 use crate::config;
 use crate::io::{self, OutputRule};
@@ -38,22 +39,31 @@ impl Callbacks for PluginCallbacks {
 
 pub fn encrypt(file: &Path, recipients: Vec<String>, out: &Output) -> Result<()> {
     let dir = config::config_dir()?;
-    let resolved = config::resolve_recipients(&dir, &recipients)?;
+    let strings = config::resolve_recipients(&dir, &recipients)?;
 
-    let mut stdin_guard = StdinGuard::new(false);
-    let recipients = age::cli_common::read_recipients(
-        resolved.recipients,
-        resolved.files,
-        vec![],
-        None,
-        &mut stdin_guard,
-    )
-    .map_err(|e| Error::new(e).context("failed to parse recipients"))?;
+    // YubiKey recipients go through the native piv-p256 stanza; the rest
+    // (X25519, other plugins) through the age parser.
+    let mut all: Vec<Box<dyn Recipient + Send>> = Vec::new();
+    let mut others = Vec::new();
+    for r in strings {
+        if r.starts_with(age_yubikey::RECIPIENT_STRING_PREFIX) {
+            let recipient: age_yubikey::Recipient = r.parse()?;
+            all.push(Box::new(recipient));
+        } else {
+            others.push(r);
+        }
+    }
+    if !others.is_empty() {
+        let mut stdin_guard = StdinGuard::new(false);
+        let parsed =
+            age::cli_common::read_recipients(others, vec![], vec![], None, &mut stdin_guard)
+                .map_err(|e| Error::new(e).context("failed to parse recipients"))?;
+        all.extend(parsed);
+    }
 
-    let encryptor =
-        Encryptor::with_recipients(recipients.iter().map(|r| r.as_ref() as &dyn Recipient))
-            .map_err(Error::new)
-            .context("failed to create the encryptor")?;
+    let encryptor = Encryptor::with_recipients(all.iter().map(|r| r.as_ref() as &dyn Recipient))
+        .map_err(Error::new)
+        .context("failed to create the encryptor")?;
 
     let dest = io::destination(out.output.as_deref(), file, &OutputRule::Append("age"));
     let mut output = io::Output::create(dest, out.force)?;
@@ -91,7 +101,7 @@ pub fn decrypt(file: &Path, identities: Vec<PathBuf>, out: &Output) -> Result<()
 }
 
 /// Resolves identities from arguments and configuration files, warning about
-/// touch when a plugin identity is present.
+/// touch when a plugin identity is present. YubiKey identities are native.
 pub(crate) fn load_identities(
     identity_args: &[PathBuf],
 ) -> Result<Vec<Box<dyn Identity + Send + Sync>>> {
@@ -103,13 +113,35 @@ pub(crate) fn load_identities(
     for entry in &entries {
         has_plugin |= entry.contains("AGE-PLUGIN-");
         let content = io::identity_content(entry)?;
-        let identity_file = IdentityFile::from_buffer(BufReader::new(content.as_bytes()))
-            .with_context(|| format!("failed to parse identity {entry}"))?;
-        ids.extend(
-            identity_file
-                .with_callbacks(PluginCallbacks)
-                .into_identities()?,
-        );
+
+        // Split the identity lines: YubiKey identities are handled natively;
+        // the rest go through the age identity file parser.
+        let mut yubikey_lines = Vec::new();
+        let mut other_lines = Vec::new();
+        for line in content.lines().map(str::trim) {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if line.starts_with(age_yubikey::IDENTITY_STRING_PREFIX) {
+                yubikey_lines.push(line.to_owned());
+            } else {
+                other_lines.push(line.to_owned());
+            }
+        }
+        for line in yubikey_lines {
+            let identity: age_yubikey::Identity = line.parse()?;
+            ids.push(Box::new(identity));
+        }
+        if !other_lines.is_empty() {
+            let identity_file =
+                IdentityFile::from_buffer(BufReader::new(other_lines.join("\n").as_bytes()))
+                    .with_context(|| format!("failed to parse identity {entry}"))?;
+            ids.extend(
+                identity_file
+                    .with_callbacks(PluginCallbacks)
+                    .into_identities()?,
+            );
+        }
     }
     if ids.is_empty() {
         anyhow::bail!("no identities found; run 'ykox age setup', or pass -i");

@@ -18,15 +18,6 @@ pub fn config_dir() -> Result<PathBuf> {
         .context("could not determine the user configuration directory")
 }
 
-/// Recipients resolved from CLI arguments and configuration files.
-#[derive(Debug, PartialEq)]
-pub struct ResolvedRecipients {
-    /// Bare recipient strings, e.g. `age1...`.
-    pub recipients: Vec<String>,
-    /// Paths to files with one recipient per line.
-    pub files: Vec<String>,
-}
-
 fn valid_lines(path: &Path) -> Result<Vec<String>> {
     let raw =
         fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
@@ -38,61 +29,41 @@ fn valid_lines(path: &Path) -> Result<Vec<String>> {
         .collect())
 }
 
-/// `-r` values may be recipients (`age1...`) or paths to recipients files.
-fn split_arg(arg: &str) -> Result<(Option<String>, Option<String>)> {
-    if arg.starts_with("age1") {
-        Ok((Some(arg.to_owned()), None))
-    } else if Path::new(arg).exists() {
-        Ok((None, Some(arg.to_owned())))
+pub fn resolve_recipients(dir: &Path, args: &[String]) -> Result<Vec<String>> {
+    let mut out: Vec<String> = Vec::new();
+
+    let sources: Vec<String> = if !args.is_empty() {
+        args.to_vec()
     } else {
-        anyhow::bail!("invalid recipient: {arg} is neither a recipient nor an existing file")
-    }
-}
-
-pub fn resolve_recipients(dir: &Path, args: &[String]) -> Result<ResolvedRecipients> {
-    if !args.is_empty() {
-        let mut out = ResolvedRecipients {
-            recipients: Vec::new(),
-            files: Vec::new(),
+        let recipients_file = dir.join(RECIPIENTS_FILE);
+        let from_file = recipients_file.is_file() && {
+            let lines = valid_lines(&recipients_file)?;
+            !lines.is_empty()
         };
-        for arg in args {
-            let (recipient, file) = split_arg(arg)?;
-            if let Some(r) = recipient {
-                out.recipients.push(r);
-            }
-            if let Some(f) = file {
-                out.files.push(f);
-            }
+        let yubikey_file = dir.join(YUBIKEY_RECIPIENT_FILE);
+        if from_file {
+            vec![recipients_file.display().to_string()]
+        } else if yubikey_file.is_file() {
+            vec![yubikey_file.display().to_string()]
+        } else {
+            anyhow::bail!(
+                "no recipients found; run 'ykox age setup', create {}, or pass -r",
+                recipients_file.display()
+            )
         }
-        return Ok(out);
-    }
+    };
 
-    let recipients_file = dir.join(RECIPIENTS_FILE);
-    if recipients_file.is_file() {
-        let lines = valid_lines(&recipients_file)?;
-        if !lines.is_empty() {
-            return Ok(ResolvedRecipients {
-                recipients: lines,
-                files: Vec::new(),
-            });
-        }
-    }
-
-    let yubikey_file = dir.join(YUBIKEY_RECIPIENT_FILE);
-    if yubikey_file.is_file() {
-        let lines = valid_lines(&yubikey_file)?;
-        if !lines.is_empty() {
-            return Ok(ResolvedRecipients {
-                recipients: lines,
-                files: Vec::new(),
-            });
+    for source in &sources {
+        let path = Path::new(source);
+        if path.is_file() {
+            out.extend(valid_lines(path)?);
+        } else if source.starts_with("age1") {
+            out.push(source.clone());
+        } else {
+            anyhow::bail!("invalid recipient: {source} is neither a recipient nor an existing file")
         }
     }
-
-    anyhow::bail!(
-        "no recipients found; run 'ykox age setup', create {}, or pass -r",
-        recipients_file.display()
-    )
+    Ok(out)
 }
 
 /// Identity entries resolved from CLI arguments and configuration files.
@@ -140,8 +111,7 @@ mod tests {
         let dir = tempdir().unwrap();
         write(&dir.path().join(RECIPIENTS_FILE), "age1fromconfig\n");
         let resolved = resolve_recipients(dir.path(), &["age1fromarg".into()]).unwrap();
-        assert_eq!(resolved.recipients, vec!["age1fromarg"]);
-        assert!(resolved.files.is_empty());
+        assert_eq!(resolved, vec!["age1fromarg"]);
     }
 
     #[test]
@@ -149,11 +119,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let file = dir.path().join("extra.txt");
         write(&file, "age1a\n# comment\n\nage1b\n");
-        let resolved = resolve_recipients(dir.path(), &["age1fromarg".into()]).unwrap();
-        assert_eq!(resolved.recipients, vec!["age1fromarg"]);
-
         let resolved = resolve_recipients(dir.path(), &[file.display().to_string()]).unwrap();
-        assert_eq!(resolved.files.len(), 1);
+        assert_eq!(resolved, vec!["age1a", "age1b"]);
     }
 
     #[test]
@@ -168,7 +135,7 @@ mod tests {
         write(&dir.path().join(RECIPIENTS_FILE), "age1multi\n");
         write(&dir.path().join(YUBIKEY_RECIPIENT_FILE), "age1yubikey\n");
         let resolved = resolve_recipients(dir.path(), &[]).unwrap();
-        assert_eq!(resolved.recipients, vec!["age1multi"]);
+        assert_eq!(resolved, vec!["age1multi"]);
     }
 
     #[test]
@@ -176,7 +143,7 @@ mod tests {
         let dir = tempdir().unwrap();
         write(&dir.path().join(YUBIKEY_RECIPIENT_FILE), "age1yubikey\n");
         let resolved = resolve_recipients(dir.path(), &[]).unwrap();
-        assert_eq!(resolved.recipients, vec!["age1yubikey"]);
+        assert_eq!(resolved, vec!["age1yubikey"]);
     }
 
     #[test]
@@ -192,7 +159,7 @@ mod tests {
         write(&dir.path().join(RECIPIENTS_FILE), "# only comments\n");
         write(&dir.path().join(YUBIKEY_RECIPIENT_FILE), "age1yubikey\n");
         let resolved = resolve_recipients(dir.path(), &[]).unwrap();
-        assert_eq!(resolved.recipients, vec!["age1yubikey"]);
+        assert_eq!(resolved, vec!["age1yubikey"]);
     }
 
     #[test]

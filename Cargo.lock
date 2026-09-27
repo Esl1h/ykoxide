@@ -56,7 +56,7 @@ checksum = "fd290633c2482479f70f6d1d96ae0e9f52c6a26cd5859edd47ee1fe33fc89f26"
 dependencies = [
  "age-core",
  "base64 0.22.1",
- "bech32",
+ "bech32 0.11.1",
  "chacha20poly1305",
  "cipher 0.4.4",
  "console",
@@ -93,7 +93,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "01d4375964d1501e5f1b32aef2ead573913893ff238448d4e9fdf1522d828656"
 dependencies = [
  "base64 0.22.1",
- "bech32",
+ "bech32 0.11.1",
  "chacha20poly1305",
  "cookie-factory",
  "hkdf",
@@ -272,6 +272,12 @@ checksum = "ba62675e8242a4c4e806d12f11d136e626e6c8361d6b829310732241652a178a"
 dependencies = [
  "serde",
 ]
+
+[[package]]
+name = "bech32"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d86b93f97252c47b41663388e6d155714a9d0c398b99f1005cbc5f978b29f445"
 
 [[package]]
 name = "bech32"
@@ -3034,15 +3040,20 @@ version = "0.1.0"
 dependencies = [
  "aes 0.9.3",
  "age",
+ "age-core",
  "anyhow",
  "assert_cmd",
+ "base64 0.23.1",
+ "bech32 0.9.1",
  "cbc",
  "challenge_response",
  "clap",
  "ctap-hid-fido2",
+ "der",
  "dirs",
  "hex",
  "hmac 0.13.0",
+ "p256",
  "pbkdf2 0.13.0",
  "pcsc",
  "predicates",
@@ -3052,6 +3063,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
+ "x509-cert",
  "yubikey",
  "zeroize",
 ]
