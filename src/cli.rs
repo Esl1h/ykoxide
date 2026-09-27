@@ -70,12 +70,16 @@ pub enum HmacCommand {
         file: PathBuf,
         #[command(flatten)]
         slot: Slot,
+        #[command(flatten)]
+        out: Output,
     },
     /// Decrypt a file produced by `hmac encrypt` or by yk-encrypt-file.sh
     Decrypt {
         file: PathBuf,
         #[command(flatten)]
         slot: Slot,
+        #[command(flatten)]
+        out: Output,
     },
 }
 

@@ -4,6 +4,7 @@ mod cli;
 mod commands;
 mod config;
 mod device;
+mod format;
 mod io;
 mod ui;
 
@@ -40,11 +41,11 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             identity,
             out,
         }) => commands::age::decrypt(&file, identity, &out),
-        Command::Hmac(HmacCommand::Encrypt { .. }) => {
-            bail!("`hmac encrypt` is not implemented yet")
+        Command::Hmac(HmacCommand::Encrypt { file, slot, out }) => {
+            commands::hmac::encrypt(&file, slot.slot, &out, cli.serial.map(|s| s.0))
         }
-        Command::Hmac(HmacCommand::Decrypt { .. }) => {
-            bail!("`hmac decrypt` is not implemented yet")
+        Command::Hmac(HmacCommand::Decrypt { file, slot, out }) => {
+            commands::hmac::decrypt(&file, slot.slot, &out, cli.serial.map(|s| s.0))
         }
         Command::Verify { .. } => bail!("`verify` is not implemented yet"),
         Command::Backup { .. } => bail!("`backup` is not implemented yet"),

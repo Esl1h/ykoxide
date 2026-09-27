@@ -6,6 +6,10 @@ pub fn info(msg: impl AsRef<str>) {
     eprintln!("[*] {}", msg.as_ref());
 }
 
+pub fn success(msg: impl AsRef<str>) {
+    eprintln!("[+] {}", msg.as_ref());
+}
+
 pub fn fail(msg: impl AsRef<str>) {
     eprintln!("[✗] {}", msg.as_ref());
 }
