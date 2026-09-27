@@ -42,6 +42,34 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Sign a file into an SSHSIG signature
+    Sign {
+        file: PathBuf,
+        /// SSH private key file (e.g. ~/.ssh/id_ed25519_sk)
+        #[arg(long, group = "signer")]
+        key: Option<PathBuf>,
+        /// Sign with a PIV ECDSA P-256 slot (e.g. 9c) instead
+        #[arg(long, group = "signer")]
+        piv_slot: Option<String>,
+        #[command(flatten)]
+        out: Output,
+    },
+    /// Verify an SSHSIG signature over a file
+    VerifySig {
+        file: PathBuf,
+        /// Detached signature; defaults to FILE.sig
+        #[arg(long)]
+        signature: Option<PathBuf>,
+        /// OpenSSH allowed_signers file
+        #[arg(long, group = "checker")]
+        allowed_signers: Option<PathBuf>,
+        /// Public key file that must have signed the file
+        #[arg(long, group = "checker")]
+        pubkey: Option<PathBuf>,
+        /// Principal to match in the allowed_signers file
+        #[arg(long)]
+        identity: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]

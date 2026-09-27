@@ -9,6 +9,9 @@
 *.yk.challenge
 *.age
 
+# ... but committed fixtures are part of the test suite
+!tests/fixtures/**
+
 # Editor swap/backup files
 *~
 *.swp

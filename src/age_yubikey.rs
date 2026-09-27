@@ -345,7 +345,7 @@ fn slot_policies(
     cert_policy(cert)
 }
 
-fn cert_policy(cert: &Certificate) -> anyhow::Result<(PinPolicy, TouchPolicy)> {
+pub(crate) fn cert_policy(cert: &Certificate) -> anyhow::Result<(PinPolicy, TouchPolicy)> {
     let extensions = cert
         .cert
         .tbs_certificate

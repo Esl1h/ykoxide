@@ -371,3 +371,139 @@ fn verify_reports_unknown_format() {
         .code(1)
         .stderr(contains("unknown file format"));
 }
+
+#[test]
+fn verify_sig_accepts_authorized_signer() {
+    let fixture = |p: &str| {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/sshsig")
+            .join(p)
+            .display()
+            .to_string()
+    };
+
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .args([
+            "verify-sig",
+            &fixture("plain.txt"),
+            "--allowed-signers",
+            &fixture("allowed_signers"),
+            "--identity",
+            "ykoxide-fixtures",
+        ])
+        .assert()
+        .success()
+        .stderr(contains("Good"));
+}
+
+#[test]
+fn verify_sig_with_pubkey() {
+    let fixture = |p: &str| {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/sshsig")
+            .join(p)
+            .display()
+            .to_string()
+    };
+
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .args([
+            "verify-sig",
+            &fixture("plain.txt"),
+            "--pubkey",
+            &fixture("pubkey.txt"),
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
+fn verify_sig_rejects_tampered_file() {
+    let dir = TempDir::new().unwrap();
+    let fixture = |p: &str| {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/sshsig")
+            .join(p)
+            .display()
+            .to_string()
+    };
+
+    let tampered = dir.path().join("tampered.txt");
+    std::fs::write(&tampered, "tampered content\n").unwrap();
+
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .args([
+            "verify-sig",
+            tampered.to_str().unwrap(),
+            "--pubkey",
+            &fixture("pubkey.txt"),
+            "--signature",
+            &fixture("plain.txt.sig"),
+        ])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(contains("bad signature"));
+}
+
+#[test]
+fn sign_with_plain_key_round_trips() {
+    let dir = TempDir::new().unwrap();
+    let fixture = |p: &str| {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/sshsig")
+            .join(p)
+            .display()
+            .to_string()
+    };
+
+    let signed = dir.path().join("plain.txt.sig");
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .args([
+            "sign",
+            &fixture("plain.txt"),
+            "--key",
+            &fixture("ssh/id_ed25519"),
+            "-o",
+            signed.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .args([
+            "verify-sig",
+            &fixture("plain.txt"),
+            "--signature",
+            signed.to_str().unwrap(),
+            "--pubkey",
+            &fixture("pubkey.txt"),
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
+fn sign_requires_a_key_source() {
+    let dir = TempDir::new().unwrap();
+    let file = dir.path().join("nokey.txt");
+    std::fs::write(&file, "x").unwrap();
+
+    // --key and --piv-slot are mutually exclusive groups; without either the
+    // default key path is used and fails cleanly when absent.
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .args([
+            "sign",
+            file.to_str().unwrap(),
+            "-o",
+            dir.path().join("s.sig").to_str().unwrap(),
+        ])
+        .assert()
+        .failure();
+}

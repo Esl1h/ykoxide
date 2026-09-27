@@ -73,6 +73,23 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Command::Backup { output, force } => {
             commands::backup::run(cli.serial, &Output { output, force })?
         }
+        Command::Sign {
+            file,
+            key,
+            piv_slot,
+            out,
+        } => commands::sign::sign(&file, key, piv_slot, &out, cli.serial)?,
+        Command::VerifySig {
+            file,
+            signature,
+            allowed_signers,
+            pubkey,
+            identity,
+        } => {
+            if !commands::sign::verify_sig(&file, signature, allowed_signers, pubkey, identity)? {
+                return Ok(ExitCode::FAILURE);
+            }
+        }
     }
     Ok(ExitCode::SUCCESS)
 }
