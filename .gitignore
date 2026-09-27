@@ -1,0 +1,25 @@
+# Build output
+/target/
+
+# Local planning notes
+/docs/
+
+# Encrypted files and challenges
+*.yk.enc
+*.yk.challenge
+*.age
+
+# Editor swap/backup files
+*~
+*.swp
+*.swo
+*.bak
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
