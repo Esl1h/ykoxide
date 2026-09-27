@@ -2,7 +2,9 @@
 
 mod cli;
 mod commands;
+mod config;
 mod device;
+mod io;
 mod ui;
 
 use std::process::ExitCode;
@@ -28,8 +30,16 @@ fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Command::Info => commands::info::run(cli.serial),
         Command::Age(AgeCommand::Setup) => bail!("`age setup` is not implemented yet"),
-        Command::Age(AgeCommand::Encrypt { .. }) => bail!("`age encrypt` is not implemented yet"),
-        Command::Age(AgeCommand::Decrypt { .. }) => bail!("`age decrypt` is not implemented yet"),
+        Command::Age(AgeCommand::Encrypt {
+            file,
+            recipient,
+            out,
+        }) => commands::age::encrypt(&file, recipient, &out),
+        Command::Age(AgeCommand::Decrypt {
+            file,
+            identity,
+            out,
+        }) => commands::age::decrypt(&file, identity, &out),
         Command::Hmac(HmacCommand::Encrypt { .. }) => {
             bail!("`hmac encrypt` is not implemented yet")
         }

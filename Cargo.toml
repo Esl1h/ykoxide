@@ -12,9 +12,16 @@ name = "ykox"
 path = "src/main.rs"
 
 [dependencies]
+age = { version = "0.12.1", features = ["armor", "cli-common", "plugin"] }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+dirs = "7.0.0"
+hex = "0.4.3"
+rpassword = "7.5.4"
+secrecy = "0.10.3"
+tempfile = "3.27.0"
 yubikey = "0.8.0"
+zeroize = "1.9.0"
 
 [profile.release]
 lto = true
@@ -22,5 +29,6 @@ codegen-units = 1
 strip = true
 
 [dev-dependencies]
+age = "0.12.1"
 assert_cmd = "2.2.2"
 predicates = "3.1.4"

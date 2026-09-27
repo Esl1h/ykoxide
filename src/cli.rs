@@ -84,6 +84,9 @@ pub struct Output {
     /// Output file
     #[arg(short, long)]
     pub output: Option<PathBuf>,
+    /// Overwrite the output file if it exists
+    #[arg(long)]
+    pub force: bool,
 }
 
 #[derive(Args)]
