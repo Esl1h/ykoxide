@@ -8,6 +8,7 @@ use ssh_key::{
 };
 use yubikey::piv::{self, AlgorithmId, SlotId};
 use yubikey::{PinPolicy, TouchPolicy};
+use zeroize::Zeroizing;
 
 use crate::cli::Output;
 use crate::device;
@@ -54,8 +55,17 @@ fn sign_ssh(file: &Path, key_path: &Path, serial: Option<yubikey::Serial>) -> Re
         std::fs::read(file).with_context(|| format!("failed to read {}", file.display()))?;
     let key_str = std::fs::read_to_string(key_path)
         .with_context(|| format!("failed to read {}", key_path.display()))?;
-    let private = PrivateKey::from_openssh(&key_str)
+    let mut private = PrivateKey::from_openssh(&key_str)
         .with_context(|| format!("failed to parse {}", key_path.display()))?;
+    if private.is_encrypted() {
+        let passphrase = Zeroizing::new(ui::prompt_secret(&format!(
+            "Passphrase for {}: ",
+            key_path.display()
+        ))?);
+        private = private
+            .decrypt(passphrase.as_bytes())
+            .map_err(|_| anyhow!("wrong passphrase for {}", key_path.display()))?;
+    }
 
     match private.key_data() {
         KeypairData::SkEd25519(sk) => return sign_sk(file, sk, serial),
