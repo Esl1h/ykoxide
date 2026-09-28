@@ -77,7 +77,7 @@ ykox verify-sig report.pdf --pubkey signer.pub
 ykox verify-sig report.pdf --allowed-signers signers.txt --identity me@example.com
 ```
 
-`sign` needs a touch (and the FIDO2 PIN when the key requires one). `verify-sig` exits 0 for a good signature and 1 for a bad one.
+`--key` takes an ed25519, ecdsa or ed25519-sk key; RSA keys are refused. `sign` needs a touch (and the FIDO2 PIN when the key requires one). `verify-sig` exits 0 for a good signature and 1 for a bad one.
 
 ### backup
 

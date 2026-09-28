@@ -57,8 +57,15 @@ fn sign_ssh(file: &Path, key_path: &Path, serial: Option<yubikey::Serial>) -> Re
     let private = PrivateKey::from_openssh(&key_str)
         .with_context(|| format!("failed to parse {}", key_path.display()))?;
 
-    if let KeypairData::SkEd25519(sk) = private.key_data() {
-        return sign_sk(file, sk, serial);
+    match private.key_data() {
+        KeypairData::SkEd25519(sk) => return sign_sk(file, sk, serial),
+        KeypairData::Ed25519(_) | KeypairData::Ecdsa(_) => {}
+        // Software RSA signing goes through the rsa crate, which leaks key
+        // bits through timing (Marvin attack, RUSTSEC-2023-0071, no fix).
+        _ => bail!(
+            "unsupported key type {}: use an ed25519, ecdsa or ed25519-sk key",
+            private.algorithm()
+        ),
     }
     private
         .sign(NAMESPACE, HashAlg::Sha512, &contents)

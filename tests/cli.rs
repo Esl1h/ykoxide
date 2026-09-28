@@ -489,6 +489,33 @@ fn sign_with_plain_key_round_trips() {
 }
 
 #[test]
+fn sign_rejects_rsa_keys() {
+    let dir = TempDir::new().unwrap();
+    let key = dir.path().join("id_rsa");
+    let file = dir.path().join("plain.txt");
+    std::fs::write(&file, "x").unwrap();
+    let status = SysCommand::new("ssh-keygen")
+        .args(["-q", "-t", "rsa", "-b", "2048", "-N", "", "-f"])
+        .arg(&key)
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .args([
+            "sign",
+            file.to_str().unwrap(),
+            "--key",
+            key.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("unsupported key type ssh-rsa"));
+    assert!(!dir.path().join("plain.txt.sig").exists());
+}
+
+#[test]
 fn sign_requires_a_key_source() {
     let dir = TempDir::new().unwrap();
     let file = dir.path().join("nokey.txt");
