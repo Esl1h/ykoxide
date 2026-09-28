@@ -32,6 +32,7 @@ pub fn encrypt(file: &Path, slot: u8, out: &Output, serial: Option<u32>) -> Resu
     let raw_challenge = random_challenge()?;
     let challenge_hex = hex::encode(&raw_challenge);
 
+    ui::info("Touch your YubiKey if it blinks");
     let response = otp::challenge_response(slot, &raw_challenge, serial)?;
     let passphrase = SecretString::from(hex::encode(*response));
 
@@ -127,6 +128,7 @@ pub(crate) fn load_challenge_response(
         );
     }
 
+    ui::info("Touch your YubiKey if it blinks");
     let response = otp::challenge_response(slot, &raw_challenge, serial)?;
     let response_hex = hex::encode(*response);
     Ok((challenge_hex, response_hex))
