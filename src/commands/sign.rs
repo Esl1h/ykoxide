@@ -288,12 +288,13 @@ fn read_public_key(path: &Path) -> Result<PublicKey> {
 fn verify_allowed_signers(
     allowed: &Path,
     principal: &str,
-    _file: &Path,
+    file: &Path,
     contents: &[u8],
     sig: &SshSig,
 ) -> Result<()> {
     let content = std::fs::read_to_string(allowed)
         .with_context(|| format!("failed to read {}", allowed.display()))?;
+    let mut signer_matched = false;
     for line in content.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -319,9 +320,16 @@ fn verify_allowed_signers(
         if key.key_data() != sig.public_key() {
             continue;
         }
+        signer_matched = true;
         if key.verify(NAMESPACE, contents, sig).is_ok() {
             return Ok(());
         }
+    }
+    if signer_matched {
+        bail!(
+            "the allowed signer {principal} matches but the signature does not verify: {} may have been modified",
+            file.display()
+        );
     }
     bail!("no allowed signer matched principal {principal} for this signature")
 }
