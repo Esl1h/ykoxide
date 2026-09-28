@@ -18,6 +18,10 @@ use crate::ui;
 const NAMESPACE: &str = "file";
 const SIGNATURE_SUFFIX: &str = "sig";
 
+/// OpenSSH sk private key flag (PROTOCOL.u2f) that marks a key demanding
+/// user verification.
+const SK_FLAG_VERIFY_REQUIRED: u8 = 0x04;
+
 pub fn sign(
     file: &Path,
     key: Option<PathBuf>,
@@ -92,6 +96,7 @@ fn sign_sk(
     sk: &ssh_key::private::SkEd25519,
     _serial: Option<yubikey::Serial>,
 ) -> Result<String> {
+    use ctap_hid_fido2::fidokey::GetAssertionArgsBuilder;
     use ctap_hid_fido2::{FidoKeyHidFactory, LibCfg};
 
     let contents =
@@ -102,26 +107,31 @@ fn sign_sk(
     let mut cfg = LibCfg::init();
     cfg.enable_log = false;
     let device = FidoKeyHidFactory::create(&cfg).context("failed to open the FIDO2 device")?;
+
+    // The crate sends the uv option unless a PIN is given, and tokens without
+    // built-in user verification (YubiKey firmware before 5.3) reject it with
+    // CTAP2_ERR_UNSUPPORTED_OPTION. Only ask for the PIN when the key itself
+    // demands verification (client PIN is the only UV mechanism there), and
+    // pass pinAuth instead of the uv option in that case.
+    let pin = if sk.flags() & SK_FLAG_VERIFY_REQUIRED != 0 {
+        Some(Zeroizing::new(ui::prompt_secret("FIDO2 PIN: ")?))
+    } else {
+        None
+    };
+
+    let mut builder = GetAssertionArgsBuilder::new(sk.public().application(), &signed_data)
+        .add_credential_id(sk.key_handle());
+    builder = match &pin {
+        Some(pin) => builder.pin(pin),
+        None => builder.without_pin_and_uv(),
+    };
+
     ui::info("Touch your YubiKey if it blinks");
     let assertion = device
-        .get_assertion(
-            sk.public().application(),
-            &signed_data,
-            &[sk.key_handle().to_vec()],
-            None,
-        )
-        .or_else(|err| {
-            ui::warn(format!(
-                "assertion without PIN failed ({err}); retrying with PIN"
-            ));
-            let pin = ui::prompt_secret("FIDO2 PIN: ")?;
-            device.get_assertion(
-                sk.public().application(),
-                &signed_data,
-                &[sk.key_handle().to_vec()],
-                Some(&pin),
-            )
-        })
+        .get_assertion_with_args(&builder.build())
+        .context("FIDO2 assertion failed")?
+        .into_iter()
+        .next()
         .context("FIDO2 assertion failed")?;
 
     // The signature covers authData || clientDataHash, with authData =
