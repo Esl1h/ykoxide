@@ -94,10 +94,16 @@ fn sign_ssh(file: &Path, key_path: &Path, serial: Option<yubikey::Serial>) -> Re
 fn sign_sk(
     file: &Path,
     sk: &ssh_key::private::SkEd25519,
-    _serial: Option<yubikey::Serial>,
+    serial: Option<yubikey::Serial>,
 ) -> Result<String> {
     use ctap_hid_fido2::fidokey::GetAssertionArgsBuilder;
     use ctap_hid_fido2::{FidoKeyHidFactory, LibCfg};
+
+    // The FIDO HID interface reports no serial number, so --serial cannot
+    // select the device here.
+    if serial.is_some() {
+        ui::warn("--serial does not apply to FIDO2 keys; signing with the connected FIDO2 device");
+    }
 
     let contents =
         std::fs::read(file).with_context(|| format!("failed to read {}", file.display()))?;
