@@ -92,8 +92,7 @@ fn sign_sk(
     sk: &ssh_key::private::SkEd25519,
     _serial: Option<yubikey::Serial>,
 ) -> Result<String> {
-    use ctap_hid_fido2::LibCfg;
-    use ctap_hid_fido2::fidokey::FidoKeyHid;
+    use ctap_hid_fido2::{FidoKeyHidFactory, LibCfg};
 
     let contents =
         std::fs::read(file).with_context(|| format!("failed to read {}", file.display()))?;
@@ -102,7 +101,7 @@ fn sign_sk(
 
     let mut cfg = LibCfg::init();
     cfg.enable_log = false;
-    let device = FidoKeyHid::new(&[], &cfg).context("no FIDO2 device found")?;
+    let device = FidoKeyHidFactory::create(&cfg).context("failed to open the FIDO2 device")?;
     ui::info("Touch your YubiKey if it blinks");
     let assertion = device
         .get_assertion(

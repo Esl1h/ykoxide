@@ -141,7 +141,7 @@ pub fn run(serial: Option<yubikey::Serial>, out: &Output) -> Result<()> {
     };
     let _ = card.disconnect(pcsc::Disposition::LeaveCard);
     // FIDO2 via HID.
-    let fido2 = read_fido2_info(serial.map(|s| s.0));
+    let fido2 = read_fido2_info();
 
     let backup = Backup {
         generated_at: rfc3339::now(),
@@ -187,27 +187,14 @@ pub fn run(serial: Option<yubikey::Serial>, out: &Output) -> Result<()> {
     Ok(())
 }
 
-fn read_fido2_info(serial: Option<u32>) -> Fido2Section {
-    use ctap_hid_fido2::LibCfg;
-    use ctap_hid_fido2::fidokey::FidoKeyHid;
+fn read_fido2_info() -> Fido2Section {
+    use ctap_hid_fido2::{FidoKeyHidFactory, LibCfg};
 
     let mut cfg = LibCfg::init();
     cfg.enable_log = false;
-    let open = match serial {
-        Some(serial) => {
-            let info = ctap_hid_fido2::get_fidokey_devices()
-                .into_iter()
-                .find(|d| d.info.contains(&format!("serial_number={serial}")));
-            match info {
-                Some(info) => FidoKeyHid::new(&[info.param], &cfg),
-                None => {
-                    ui::warn("no FIDO2 device found for the given serial");
-                    return empty_fido2();
-                }
-            }
-        }
-        None => FidoKeyHid::new(&[], &cfg),
-    };
+    // The YubiKey FIDO HID interface reports an empty serial number, so the
+    // device cannot be matched to --serial; take the only one connected.
+    let open = FidoKeyHidFactory::create(&cfg);
 
     match open.and_then(|device| device.get_info()) {
         Ok(info) => Fido2Section {
