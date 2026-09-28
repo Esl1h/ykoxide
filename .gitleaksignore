@@ -1,0 +1,3 @@
+# Throwaway private key for the SSHSIG test fixtures, committed on purpose
+# (see tests/fixtures/make-sshsig.sh); it grants access to nothing.
+tests/fixtures/sshsig/ssh/id_ed25519:private-key:1
