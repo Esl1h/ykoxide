@@ -294,6 +294,32 @@ fn decrypt_without_age_extension_uses_decrypted_suffix() {
 }
 
 #[test]
+fn hmac_decrypt_honors_output_before_touching_the_key() {
+    let dir = TempDir::new().unwrap();
+    let enc = dir.path().join("secret.txt.yk.enc");
+    let taken = dir.path().join("elsewhere.txt");
+    std::fs::write(&enc, "Salted__").unwrap();
+    std::fs::write(&taken, "keep").unwrap();
+
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .args([
+            "hmac",
+            "decrypt",
+            enc.to_str().unwrap(),
+            "-o",
+            taken.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(contains(format!(
+            "output already exists: {}",
+            taken.display()
+        )));
+    assert_eq!(std::fs::read_to_string(&taken).unwrap(), "keep");
+}
+
+#[test]
 fn verify_passes_for_a_valid_age_file() {
     let dir = TempDir::new().unwrap();
     let (identity, recipient) = make_identity(&dir);

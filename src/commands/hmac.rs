@@ -54,7 +54,13 @@ pub fn encrypt(file: &Path, slot: u8, out: &Output, serial: Option<u32>) -> Resu
 }
 
 pub fn decrypt(file: &Path, slot: u8, out: &Output, serial: Option<u32>) -> Result<()> {
-    let default_output = output_base(file);
+    let dest = match out.output.as_deref() {
+        Some(p) if p == Path::new("-") => None,
+        Some(p) => Some(p.to_path_buf()),
+        None => Some(output_base(file)),
+    };
+    // Fail on an existing output before asking the YubiKey for a touch.
+    let mut output = io::Output::create(dest.clone(), out.force)?;
     let (challenge_hex, response_hex) = load_challenge_response(file, slot, serial)?;
 
     let mut input =
@@ -67,26 +73,23 @@ pub fn decrypt(file: &Path, slot: u8, out: &Output, serial: Option<u32>) -> Resu
         .context("failed to read the file header")?;
     let mut reader = Cursor::new(prefix.clone()).chain(input);
 
-    let dest = if prefix.starts_with(legacy::MAGIC) {
+    if prefix.starts_with(legacy::MAGIC) {
         let passphrase = legacy::derive_passphrase(&challenge_hex, &response_hex);
-        let mut output = io::Output::create(Some(default_output.clone()), out.force)?;
         legacy::decrypt(&mut reader, passphrase.as_bytes(), output.writer())?;
-        output.finish()?;
-        default_output
     } else if prefix.starts_with(b"age-encryption.org/v1") {
         let identity = scrypt_identity(&response_hex);
         let decryptor = Decryptor::new(&mut reader)
             .with_context(|| format!("{} is not a valid age file", file.display()))?;
         let mut plaintext = decryptor.decrypt(std::iter::once(&identity as &_))?;
-        let mut output = io::Output::create(Some(default_output.clone()), out.force)?;
         copy(&mut plaintext, output.writer())?;
-        output.finish()?;
-        default_output
     } else {
         bail!("unrecognized file format: expected a legacy (Salted__) or age file");
-    };
+    }
+    output.finish()?;
 
-    ui::success(format!("Decrypted: {}", dest.display()));
+    if let Some(dest) = dest {
+        ui::success(format!("Decrypted: {}", dest.display()));
+    }
     Ok(())
 }
 
