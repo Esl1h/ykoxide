@@ -3,6 +3,7 @@
 use std::io::Write as _;
 
 use anyhow::{Context as _, Result};
+use zeroize::Zeroizing;
 
 pub fn info(msg: impl AsRef<str>) {
     eprintln!("[*] {}", msg.as_ref());
@@ -20,9 +21,12 @@ pub fn fail(msg: impl AsRef<str>) {
     eprintln!("[✗] {}", msg.as_ref());
 }
 
-/// Read a secret (PIN, passphrase) without echo.
-pub fn prompt_secret(prompt: &str) -> Result<String> {
-    rpassword::prompt_password(prompt).context("failed to read the secret")
+/// Read a secret (PIN, passphrase) without echo. The buffer is zeroized on
+/// drop so the secret does not linger in freed memory.
+pub fn prompt_secret(prompt: &str) -> Result<Zeroizing<String>> {
+    rpassword::prompt_password(prompt)
+        .map(Zeroizing::new)
+        .context("failed to read the secret")
 }
 
 /// Read a non-secret answer from stdin (echo on).
