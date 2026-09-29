@@ -1,0 +1,32 @@
+# Complements cargo-audit with license, duplicate and advisory checks with
+# stable, machine-readable output for CI. The advisory ignore mirrors
+# .cargo/audit.toml.
+
+[advisories]
+version = 2
+# rsa 0.9 (Marvin attack) has no fixed release. It comes in through
+# yubikey and ssh-key, but ykoxide never runs an RSA private-key operation
+# in software: PIV work is P-256 on the device and `sign` refuses RSA keys.
+ignore = ["RUSTSEC-2023-0071"]
+
+[licenses]
+version = 2
+# Everything in the tree is permissive; the list is closed on purpose so a
+# new copyleft dependency fails the check instead of slipping in silently.
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "MPL-2.0",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "warn"
+unknown-git = "warn"
