@@ -18,6 +18,10 @@ use crate::ui;
 const NAMESPACE: &str = "file";
 const SIGNATURE_SUFFIX: &str = "sig";
 
+/// OpenSSH sk private key flag (PROTOCOL.u2f) that marks a key demanding
+/// user verification.
+const SK_FLAG_VERIFY_REQUIRED: u8 = 0x04;
+
 pub fn sign(
     file: &Path,
     key: Option<PathBuf>,
@@ -90,9 +94,16 @@ fn sign_ssh(file: &Path, key_path: &Path, serial: Option<yubikey::Serial>) -> Re
 fn sign_sk(
     file: &Path,
     sk: &ssh_key::private::SkEd25519,
-    _serial: Option<yubikey::Serial>,
+    serial: Option<yubikey::Serial>,
 ) -> Result<String> {
+    use ctap_hid_fido2::fidokey::GetAssertionArgsBuilder;
     use ctap_hid_fido2::{FidoKeyHidFactory, LibCfg};
+
+    // The FIDO HID interface reports no serial number, so --serial cannot
+    // select the device here.
+    if serial.is_some() {
+        ui::warn("--serial does not apply to FIDO2 keys; signing with the connected FIDO2 device");
+    }
 
     let contents =
         std::fs::read(file).with_context(|| format!("failed to read {}", file.display()))?;
@@ -102,26 +113,31 @@ fn sign_sk(
     let mut cfg = LibCfg::init();
     cfg.enable_log = false;
     let device = FidoKeyHidFactory::create(&cfg).context("failed to open the FIDO2 device")?;
+
+    // The crate sends the uv option unless a PIN is given, and tokens without
+    // built-in user verification (YubiKey firmware before 5.3) reject it with
+    // CTAP2_ERR_UNSUPPORTED_OPTION. Only ask for the PIN when the key itself
+    // demands verification (client PIN is the only UV mechanism there), and
+    // pass pinAuth instead of the uv option in that case.
+    let pin = if sk.flags() & SK_FLAG_VERIFY_REQUIRED != 0 {
+        Some(Zeroizing::new(ui::prompt_secret("FIDO2 PIN: ")?))
+    } else {
+        None
+    };
+
+    let mut builder = GetAssertionArgsBuilder::new(sk.public().application(), &signed_data)
+        .add_credential_id(sk.key_handle());
+    builder = match &pin {
+        Some(pin) => builder.pin(pin),
+        None => builder.without_pin_and_uv(),
+    };
+
     ui::info("Touch your YubiKey if it blinks");
     let assertion = device
-        .get_assertion(
-            sk.public().application(),
-            &signed_data,
-            &[sk.key_handle().to_vec()],
-            None,
-        )
-        .or_else(|err| {
-            ui::warn(format!(
-                "assertion without PIN failed ({err}); retrying with PIN"
-            ));
-            let pin = ui::prompt_secret("FIDO2 PIN: ")?;
-            device.get_assertion(
-                sk.public().application(),
-                &signed_data,
-                &[sk.key_handle().to_vec()],
-                Some(&pin),
-            )
-        })
+        .get_assertion_with_args(&builder.build())
+        .context("FIDO2 assertion failed")?
+        .into_iter()
+        .next()
         .context("FIDO2 assertion failed")?;
 
     // The signature covers authData || clientDataHash, with authData =
@@ -278,12 +294,13 @@ fn read_public_key(path: &Path) -> Result<PublicKey> {
 fn verify_allowed_signers(
     allowed: &Path,
     principal: &str,
-    _file: &Path,
+    file: &Path,
     contents: &[u8],
     sig: &SshSig,
 ) -> Result<()> {
     let content = std::fs::read_to_string(allowed)
         .with_context(|| format!("failed to read {}", allowed.display()))?;
+    let mut signer_matched = false;
     for line in content.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -309,9 +326,16 @@ fn verify_allowed_signers(
         if key.key_data() != sig.public_key() {
             continue;
         }
+        signer_matched = true;
         if key.verify(NAMESPACE, contents, sig).is_ok() {
             return Ok(());
         }
+    }
+    if signer_matched {
+        bail!(
+            "the allowed signer {principal} matches but the signature does not verify: {} may have been modified",
+            file.display()
+        );
     }
     bail!("no allowed signer matched principal {principal} for this signature")
 }

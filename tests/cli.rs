@@ -476,6 +476,56 @@ fn verify_sig_rejects_tampered_file() {
 }
 
 #[test]
+fn verify_sig_with_allowed_signers_tells_a_modified_file_from_an_unknown_signer() {
+    let dir = TempDir::new().unwrap();
+    let fixture = |p: &str| {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/sshsig")
+            .join(p)
+            .display()
+            .to_string()
+    };
+
+    let tampered = dir.path().join("tampered.txt");
+    std::fs::write(&tampered, "tampered content\n").unwrap();
+
+    // The signer is allowed and its key matches, so the message must point at
+    // the contents, not at the principal.
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .args([
+            "verify-sig",
+            tampered.to_str().unwrap(),
+            "--allowed-signers",
+            &fixture("allowed_signers"),
+            "--identity",
+            "ykoxide-fixtures",
+            "--signature",
+            &fixture("plain.txt.sig"),
+        ])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(contains("the signature does not verify"));
+
+    // A principal that never signed must keep the matcher message.
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .args([
+            "verify-sig",
+            &fixture("plain.txt"),
+            "--allowed-signers",
+            &fixture("allowed_signers"),
+            "--identity",
+            "someone-else",
+        ])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(contains("no allowed signer matched principal someone-else"));
+}
+
+#[test]
 fn sign_with_plain_key_round_trips() {
     let dir = TempDir::new().unwrap();
     let fixture = |p: &str| {
