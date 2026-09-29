@@ -1,0 +1,59 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Never paste PINs, passphrases, private keys or private files. For a security problem, do not use this form: report it privately through the link on the issue chooser.
+  - type: input
+    id: version
+    attributes:
+      label: ykox version
+      description: Output of `ykox --version`.
+      placeholder: ykox 0.1.1
+    validations:
+      required: true
+  - type: input
+    id: install
+    attributes:
+      label: How was it installed?
+      placeholder: prebuilt binary, cargo install or from source
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Operating system and architecture
+      placeholder: Fedora 44, x86_64
+    validations:
+      required: true
+  - type: input
+    id: key
+    attributes:
+      label: YubiKey model and firmware
+      description: Shown by `ykox info`.
+      placeholder: YubiKey 5 NFC, firmware 5.2.6
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command you ran
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected to happen
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead
+      description: Include the full output, with any secret removed.
+      render: text
+    validations:
+      required: true
