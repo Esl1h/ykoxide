@@ -8,6 +8,11 @@ on:
   schedule:
     - cron: "23 5 * * 1"
 
+# Every job only reads the repository; a read-only token limits what a
+# compromised step or dependency could do.
+permissions:
+  contents: read
+
 jobs:
   build:
     if: github.event_name != 'schedule'
