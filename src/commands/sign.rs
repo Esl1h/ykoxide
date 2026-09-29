@@ -8,7 +8,6 @@ use ssh_key::{
 };
 use yubikey::piv::{self, AlgorithmId, SlotId};
 use yubikey::{PinPolicy, TouchPolicy};
-use zeroize::Zeroizing;
 
 use crate::cli::Output;
 use crate::device;
@@ -62,10 +61,7 @@ fn sign_ssh(file: &Path, key_path: &Path, serial: Option<yubikey::Serial>) -> Re
     let mut private = PrivateKey::from_openssh(&key_str)
         .with_context(|| format!("failed to parse {}", key_path.display()))?;
     if private.is_encrypted() {
-        let passphrase = Zeroizing::new(ui::prompt_secret(&format!(
-            "Passphrase for {}: ",
-            key_path.display()
-        ))?);
+        let passphrase = ui::prompt_secret(&format!("Passphrase for {}: ", key_path.display()))?;
         private = private
             .decrypt(passphrase.as_bytes())
             .map_err(|_| anyhow!("wrong passphrase for {}", key_path.display()))?;
@@ -120,7 +116,7 @@ fn sign_sk(
     // demands verification (client PIN is the only UV mechanism there), and
     // pass pinAuth instead of the uv option in that case.
     let pin = if sk.flags() & SK_FLAG_VERIFY_REQUIRED != 0 {
-        Some(Zeroizing::new(ui::prompt_secret("FIDO2 PIN: ")?))
+        Some(ui::prompt_secret("FIDO2 PIN: ")?)
     } else {
         None
     };

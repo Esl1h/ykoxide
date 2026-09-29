@@ -33,7 +33,9 @@ impl Callbacks for PluginCallbacks {
 
     fn request_passphrase(&self, description: &str) -> Option<SecretString> {
         ui::info(description);
-        ui::prompt_secret("PIN: ").ok().map(SecretString::from)
+        ui::prompt_secret("PIN: ")
+            .ok()
+            .map(|pin| SecretString::from(pin.as_str()))
     }
 }
 
