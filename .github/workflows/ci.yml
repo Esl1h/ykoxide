@@ -33,3 +33,15 @@ jobs:
           tool: cargo-audit
       - name: Audit dependencies
         run: cargo audit
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - name: Check licenses, duplicates and advisories
+        run: cargo deny check
