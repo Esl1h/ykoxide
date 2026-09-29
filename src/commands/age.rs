@@ -7,10 +7,13 @@ use age::{
     Callbacks, Decryptor, Encryptor, Identity, IdentityFile, Recipient, armor::ArmoredReader,
 };
 use anyhow::{Context as _, Error, Result, bail};
+use yubikey::piv::SlotId;
+use yubikey::{PinPolicy, TouchPolicy};
 
 use crate::age_yubikey;
 use crate::cli::Output;
 use crate::config;
+use crate::device;
 use crate::io::{self, OutputRule};
 use crate::ui;
 
@@ -164,20 +167,20 @@ pub(crate) fn decryptor_for(file: &Path) -> Result<AgeDecryptor> {
         .with_context(|| format!("{} is not a valid age file", file.display()))
 }
 
-/// Options for `age setup`, mirroring the plugin's CLI.
+/// Options for `age setup`.
 pub struct SetupOpts {
     pub generate: bool,
     pub slot: u8,
-    pub touch_policy: &'static str,
-    pub pin_policy: &'static str,
+    pub touch_policy: crate::cli::PolicyArg,
+    pub pin_policy: crate::cli::PolicyArg,
     pub force: bool,
 }
 
-pub fn setup(opts: &SetupOpts) -> Result<()> {
+pub fn setup(opts: &SetupOpts, serial: Option<yubikey::Serial>) -> Result<()> {
     let dir = config::config_dir()?;
     let (identity, recipient) = match opts.generate {
-        false => reuse(opts)?,
-        true => generate(opts)?,
+        false => reuse(opts, serial)?,
+        true => generate(opts, serial)?,
     };
 
     write_config(&dir, &identity, &recipient, opts.force)?;
@@ -188,26 +191,30 @@ pub fn setup(opts: &SetupOpts) -> Result<()> {
     Ok(())
 }
 
-fn reuse(opts: &SetupOpts) -> Result<(String, String)> {
-    let list = run_plugin(&["--list"])?;
-    let recipient = first_line_starting(&list, "age1").with_context(|| {
-        format!("no age identity found on the YubiKey; pass --generate to create one on retired slot {}", opts.slot)
-    })?;
-    extract_identity(opts, recipient)
+fn retired_slot(slot: u8) -> Result<yubikey::piv::RetiredSlotId> {
+    yubikey::piv::RetiredSlotId::try_from(0x81 + slot)
+        .with_context(|| format!("invalid retired slot {slot}"))
 }
 
-fn extract_identity(opts: &SetupOpts, recipient: &str) -> Result<(String, String)> {
-    let out = run_plugin(&["--identity", "--slot", &opts.slot.to_string()])?;
-    let identity = first_line_starting(&out, "AGE-PLUGIN-YUBIKEY-").with_context(|| {
-        format!(
-            "failed to extract the identity from slot {}; check that the slot holds a key",
-            opts.slot
-        )
-    })?;
-    Ok((identity.to_owned(), recipient.to_owned()))
+/// Reuses an existing age identity found on the target slot.
+fn reuse(opts: &SetupOpts, serial: Option<yubikey::Serial>) -> Result<(String, String)> {
+    let mut yk = device::open(serial)?;
+    let piv_slot = retired_slot(opts.slot)?;
+    let cert = yubikey::certificate::Certificate::read(&mut yk, SlotId::Retired(piv_slot))
+        .with_context(|| {
+            format!(
+                "no age identity found on retired slot {}; pass --generate to create one",
+                opts.slot
+            )
+        })?;
+    let identity = age_yubikey::Identity::from_certificate(&cert, yk.serial(), piv_slot)?;
+    let recipient = age_yubikey::Recipient::from_certificate(&cert)
+        .context("the slot key is not an age P-256 identity")?;
+    Ok((identity.to_string(), recipient.to_string()))
 }
 
-fn generate(opts: &SetupOpts) -> Result<(String, String)> {
+/// Generates a new identity in the target slot (destructive; asks for YES).
+fn generate(opts: &SetupOpts, serial: Option<yubikey::Serial>) -> Result<(String, String)> {
     let piv_slot = 0x81u8 + opts.slot;
     ui::warn(format!(
         "This will OVERWRITE the existing key in PIV retired slot {} ({piv_slot:02x}).",
@@ -220,45 +227,28 @@ fn generate(opts: &SetupOpts) -> Result<(String, String)> {
         anyhow::bail!("generation aborted");
     }
 
-    ui::info("Touch YubiKey if it blinks. PIN may be required.");
-    run_plugin(&[
-        "--generate",
-        "--slot",
-        &opts.slot.to_string(),
-        "--name",
+    let pin_policy = match opts.pin_policy {
+        crate::cli::PolicyArg::Always => PinPolicy::Always,
+        crate::cli::PolicyArg::Once => PinPolicy::Once,
+        crate::cli::PolicyArg::Never => PinPolicy::Never,
+        crate::cli::PolicyArg::Cached => bail!("cached is not a valid PIN policy"),
+    };
+    let touch_policy = match opts.touch_policy {
+        crate::cli::PolicyArg::Always => TouchPolicy::Always,
+        crate::cli::PolicyArg::Cached => TouchPolicy::Cached,
+        crate::cli::PolicyArg::Never => TouchPolicy::Never,
+        crate::cli::PolicyArg::Once => bail!("once is not a valid touch policy"),
+    };
+
+    let mut yk = device::open(serial)?;
+    let (identity, recipient) = age_yubikey::generate_identity(
+        &mut yk,
+        retired_slot(opts.slot)?,
         "yk-toolkit",
-        "--touch-policy",
-        opts.touch_policy,
-        "--pin-policy",
-        opts.pin_policy,
-    ])?;
-
-    ui::info("Extracting new identity from YubiKey...");
-    let list = run_plugin(&["--list"])?;
-    let recipient = first_line_starting(&list, "age1")
-        .context("generation finished but no recipient found in the list")?;
-    extract_identity(opts, recipient)
-}
-
-fn run_plugin(args: &[&str]) -> Result<String> {
-    let output = std::process::Command::new("age-plugin-yubikey")
-        .args(args)
-        .output()
-        .with_context(|| {
-            "age-plugin-yubikey not found in PATH; install it with 'cargo install age-plugin-yubikey --locked'"
-        })?;
-    if !output.status.success() {
-        bail!(
-            "age-plugin-yubikey {} failed: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-}
-
-fn first_line_starting<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
-    text.lines().map(str::trim).find(|l| l.starts_with(prefix))
+        pin_policy,
+        touch_policy,
+    )?;
+    Ok((identity.to_string(), recipient.to_string()))
 }
 
 /// Writes the two configuration files with the script's permissions:
@@ -328,15 +318,5 @@ mod tests {
             std::fs::read_to_string(dir.path().join(config::YUBIKEY_IDENTITY_FILE)).unwrap(),
             "AGE-PLUGIN-YUBIKEY-2\n"
         );
-    }
-
-    #[test]
-    fn first_line_starting_skips_comments_and_blanks() {
-        let text = "# comment\n\n  AGE-PLUGIN-YUBIKEY-1\nother";
-        assert_eq!(
-            first_line_starting(text, "AGE-PLUGIN-"),
-            Some("AGE-PLUGIN-YUBIKEY-1")
-        );
-        assert_eq!(first_line_starting(text, "age1"), None);
     }
 }

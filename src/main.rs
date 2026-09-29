@@ -38,13 +38,18 @@ fn run(cli: Cli) -> Result<ExitCode> {
             touch_policy,
             pin_policy,
             force,
-        }) => commands::age::setup(&commands::age::SetupOpts {
-            generate,
-            slot,
-            touch_policy: touch_policy.as_str(),
-            pin_policy: pin_policy.as_str(),
-            force,
-        })?,
+        }) => {
+            commands::age::setup(
+                &commands::age::SetupOpts {
+                    generate,
+                    slot,
+                    touch_policy,
+                    pin_policy,
+                    force,
+                },
+                cli.serial,
+            )?;
+        }
         Command::Age(AgeCommand::Encrypt {
             file,
             recipient,
