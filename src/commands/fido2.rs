@@ -55,8 +55,7 @@ pub fn enroll(rp_id: &str, require_pin: bool, force: bool) -> Result<()> {
     };
     let credential = fido2::enroll(rp_id, pin.as_deref().map(|p| p.as_str()))?;
 
-    let mut dir = config::config_dir()?;
-    dir.push("fido2");
+    let dir = config::fido2_dir()?;
     std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
     #[cfg(unix)]
     {
@@ -256,9 +255,7 @@ fn derive_secret(
 }
 
 fn read_credential_file() -> Result<CredentialFile> {
-    let mut path = config::config_dir()?;
-    path.push("fido2");
-    path.push("credential.json");
+    let path = config::fido2_dir()?.join("credential.json");
     let raw = std::fs::read_to_string(&path)
         .with_context(|| format!("failed to read {}", path.display()))?;
     let file: CredentialFile = serde_json::from_str(&raw).with_context(|| {

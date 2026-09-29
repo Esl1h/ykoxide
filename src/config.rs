@@ -18,6 +18,13 @@ pub fn config_dir() -> Result<PathBuf> {
         .context("could not determine the user configuration directory")
 }
 
+/// `~/.config/yk-toolkit/fido2/`, next to the age directory and not inside it.
+pub fn fido2_dir() -> Result<PathBuf> {
+    dirs::config_dir()
+        .map(|d| d.join("yk-toolkit").join("fido2"))
+        .context("could not determine the user configuration directory")
+}
+
 fn valid_lines(path: &Path) -> Result<Vec<String>> {
     let raw =
         fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;

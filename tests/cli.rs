@@ -6,6 +6,7 @@ use age::armor::{ArmoredWriter, Format};
 use age::secrecy::ExposeSecret;
 use age::{Encryptor, Recipient, x25519};
 use assert_cmd::Command;
+use predicates::prelude::PredicateBooleanExt as _;
 use predicates::str::contains;
 use tempfile::TempDir;
 
@@ -618,4 +619,22 @@ fn fido2_help_exits_zero() {
         .args(["fido2", "enroll", "--help"])
         .assert()
         .success();
+}
+
+#[test]
+fn fido2_credential_lives_next_to_the_age_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("plain.txt");
+    std::fs::write(&file, "data").unwrap();
+
+    // encrypt reads the credential before it opens any device, so a missing
+    // file fails without hardware and names the path it looked at.
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .env("XDG_CONFIG_HOME", dir.path())
+        .args(["fido2", "encrypt", file.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(contains("yk-toolkit/fido2/credential.json"))
+        .stderr(contains("age/fido2").not());
 }
