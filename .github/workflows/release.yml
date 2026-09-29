@@ -28,6 +28,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+      # Both runners are native for their target, so the test suite runs
+      # against the binaries that are about to be released.
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        run: cargo test
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
       - name: Package
