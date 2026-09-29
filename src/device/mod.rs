@@ -1,5 +1,6 @@
 //! Device discovery and session handling over PC/SC.
 
+pub mod fido2;
 pub mod mgmt;
 pub mod openpgp;
 pub mod otp;

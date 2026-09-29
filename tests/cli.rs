@@ -610,3 +610,12 @@ fn sign_requires_a_key_source() {
         .assert()
         .failure();
 }
+
+#[test]
+fn fido2_help_exits_zero() {
+    Command::cargo_bin("ykox")
+        .unwrap()
+        .args(["fido2", "enroll", "--help"])
+        .assert()
+        .success();
+}

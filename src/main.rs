@@ -15,7 +15,7 @@ use std::process::ExitCode;
 use anyhow::Result;
 use clap::Parser;
 
-use cli::{AgeCommand, Cli, Command, HmacCommand, Output};
+use cli::{AgeCommand, Cli, Command, Fido2Command, HmacCommand, Output};
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -65,6 +65,17 @@ fn run(cli: Cli) -> Result<ExitCode> {
         }
         Command::Hmac(HmacCommand::Decrypt { file, slot, out }) => {
             commands::hmac::decrypt(&file, slot.slot, &out, cli.serial.map(|s| s.0))?
+        }
+        Command::Fido2(Fido2Command::Enroll {
+            rp_id,
+            require_pin,
+            force,
+        }) => commands::fido2::enroll(&rp_id, require_pin, force)?,
+        Command::Fido2(Fido2Command::Encrypt { file, out }) => {
+            commands::fido2::encrypt(&file, &out, cli.serial)?
+        }
+        Command::Fido2(Fido2Command::Decrypt { file, out }) => {
+            commands::fido2::decrypt(&file, &out, cli.serial)?
         }
         Command::Verify {
             file,

@@ -149,7 +149,7 @@ fn challenge_path_for(main_path: &Path) -> PathBuf {
 }
 
 /// `FILE.yk.enc` and `FILE.enc` become `FILE`; anything else gets `.decrypted`.
-fn output_base(file: &Path) -> PathBuf {
+pub(crate) fn output_base(file: &Path) -> PathBuf {
     let name = file.to_string_lossy();
     for suffix in [".yk.enc", ".yk.age", ".enc", ".age"] {
         if let Some(base) = name.strip_suffix(suffix) {
