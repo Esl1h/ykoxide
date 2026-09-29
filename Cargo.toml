@@ -3,9 +3,17 @@ name = "ykoxide"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
-description = "YubiKey toolkit: age, PIV and challenge-response file encryption in a single binary"
+description = "YubiKey toolkit: age, PIV, FIDO2 and challenge-response file encryption and SSH signing in a single binary"
 license = "MIT"
 repository = "https://github.com/Esl1h/ykoxide"
+keywords = ["yubikey", "age", "fido2", "piv", "encryption"]
+categories = ["command-line-utilities", "cryptography", "hardware-support"]
+
+# cargo-binstall downloads the release tarballs instead of building from source.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/ykoxide-{ version }-{ target }.tar.gz"
+pkg-fmt = "tgz"
+bin-dir = "ykoxide-{ version }-{ target }/{ bin }{ binary-ext }"
 
 [[bin]]
 name = "ykox"
