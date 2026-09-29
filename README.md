@@ -42,7 +42,7 @@ ykox age decrypt secret.txt.age
 
 Recipients and identities resolve in this order: `-r`/`-i` arguments, then `~/.config/yk-toolkit/age/recipients.txt` (or `identities.txt`), then the `yubikey-recipient.txt`/`yubikey-identity.txt` written by `age setup`. `-o -` writes to stdout; an existing output needs `--force`.
 
-The native `age1yubikey1...` recipient path does not need the `age-plugin-yubikey` binary; `age setup --generate` still calls it (and it must be in the PATH).
+The `age1yubikey1...` recipient and identity paths, including `age setup --generate`, are native: the `age-plugin-yubikey` binary is not needed.
 
 ### hmac
 
@@ -55,6 +55,19 @@ ykox hmac decrypt secret.txt.yk.enc # legacy files from yk-encrypt-file.sh
 ```
 
 The legacy `.yk.enc` format is unauthenticated: a wrong key passes about 1 time in 256.
+
+### fido2
+
+File encryption with a FIDO2 `hmac-secret` credential, for keys without PIV or OTP (works on the Security Key line):
+
+```sh
+ykox fido2 enroll                     # create the credential (one time, adds it to the token)
+ykox fido2 enroll --require-pin       # ... asking the FIDO2 PIN on every derivation
+ykox fido2 encrypt secret.txt         # secret.txt.yk.age + secret.txt.yk.fido2
+ykox fido2 decrypt secret.txt.yk.age
+```
+
+`enroll` stores the credential reference in `~/.config/yk-toolkit/fido2/credential.json` (0600); each encrypted file carries a JSON sidecar (`.yk.fido2`) with the credential id and its own 32-byte salt, so files never share a derived key. The token asks for a touch on every operation; with `--require-pin` it also asks for the FIDO2 PIN. Losing the sidecar file means losing the salt, and with it the file contents.
 
 ### verify
 
@@ -85,7 +98,7 @@ ykox verify-sig report.pdf --allowed-signers signers.txt --identity me@example.c
 ykox backup -o yubikey.json
 ```
 
-Dumps the device state (serial, firmware, form factor, enabled applets over USB/NFC, PIV slots, FIDO2 capabilities, OpenPGP fingerprints) as JSON. Never includes secrets.
+Dumps the device state (serial, firmware, form factor, enabled applets over USB/NFC, PIV slots, OTP slot state, FIDO2 capabilities including AAGUID and PIN retries, OpenPGP fingerprints) as JSON. Never includes secrets.
 
 ## Configuration files
 
@@ -94,6 +107,8 @@ Dumps the device state (serial, firmware, form factor, enabled applets over USB/
 - `recipients.txt`: one recipient per line; empty lines and `#` comments ignored.
 - `identities.txt`: one identity FILE PATH per line; empty lines and `#` ignored.
 - `yubikey-identity.txt` / `yubikey-recipient.txt`: written by `age setup` (0600/0644).
+
+`~/.config/yk-toolkit/fido2/credential.json`: written by `fido2 enroll` (0600), the default credential for `fido2 encrypt`.
 
 ## License
 
