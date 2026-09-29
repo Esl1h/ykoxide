@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+
+- `fido2 enroll`, `fido2 encrypt` and `fido2 decrypt` failed with `CTAP2_ERR_UNSUPPORTED_OPTION` (0x2B) on tokens without built-in user verification, which includes the YubiKey 5 series. `enroll` now asks for the FIDO2 PIN whenever the token has one, since creating a credential needs it, and refuses `--require-pin` on a token with no PIN.
+- `fido2 enroll` stored the credential in `~/.config/yk-toolkit/age/fido2/` instead of `~/.config/yk-toolkit/fido2/`, which is what the README documents. If you created a credential with an earlier version, move `credential.json` to the documented directory.
+
 ## [0.1.1] - 2026-09-29
 
 No changes to the `ykox` binary itself: this release is about packaging, documentation and supply chain.

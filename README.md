@@ -130,7 +130,7 @@ ykox fido2 encrypt secret.txt         # secret.txt.yk.age + secret.txt.yk.fido2
 ykox fido2 decrypt secret.txt.yk.age
 ```
 
-`enroll` stores the credential reference in `~/.config/yk-toolkit/fido2/credential.json` (0600); each encrypted file carries a JSON sidecar (`.yk.fido2`) with the credential id and its own 32-byte salt, so files never share a derived key. The token asks for a touch on every operation; with `--require-pin` it also asks for the FIDO2 PIN. Losing the sidecar file means losing the salt, and with it the file contents.
+`enroll` stores the credential reference in `~/.config/yk-toolkit/fido2/credential.json` (0600); each encrypted file carries a JSON sidecar (`.yk.fido2`) with the credential id and its own 32-byte salt, so files never share a derived key. Creating the credential asks for the FIDO2 PIN once when the token has one. After that the token asks for a touch on every operation; with `--require-pin` it also asks for the PIN on every derivation. Losing the sidecar file means losing the salt, and with it the file contents.
 
 ### verify
 
@@ -167,10 +167,10 @@ Dumps the device state (serial, firmware, form factor, enabled applets over USB/
 
 ykoxide is pre-1.0. The command line and the newer file formats may still change; release notes call out breaking changes.
 
-- **Tested hardware:** one YubiKey 5 NFC (firmware 5.2.6) on Fedora, x86_64. Other models and operating systems are untested.
+- **Tested hardware:** one YubiKey 5 NFC (firmware 5.2.6) on Fedora, x86_64, and a YubiKey 5C (firmware 5.4.3) for FIDO2. Other models and operating systems are untested.
 - **Checked against the reference tools on that key:** age files interoperate with `age-plugin-yubikey` in both directions; the HMAC response matches `ykman otp calculate`; legacy `.yk.enc` files from the shell toolkit decrypt; SSHSIG signatures verify with `ssh-keygen -Y verify`; the device fields of `backup` match `ykman`.
 - **aarch64:** release binaries are built and tested in CI on a native ARM runner, but have not been run against a key.
-- **FIDO2 is experimental:** the code is covered by tests that run without hardware, but `fido2 enroll` and the encrypt/decrypt round trip have not been validated on a real token yet. The file format is specific to `ykox` and is not interoperable with `age-plugin-fido2-hmac`; it may change before 1.0.
+- **FIDO2 is experimental:** enroll, encrypt, `verify` and decrypt work end to end on one YubiKey 5C (firmware 5.4.3). It has not been tried on a Security Key or on a token with built-in user verification such as a fingerprint reader. The file format is specific to `ykox` and is not interoperable with `age-plugin-fido2-hmac`; it may change before 1.0.
 
 ## Security
 
