@@ -121,17 +121,6 @@ pub enum PolicyArg {
     Never,
 }
 
-impl PolicyArg {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Always => "always",
-            Self::Cached => "cached",
-            Self::Once => "once",
-            Self::Never => "never",
-        }
-    }
-}
-
 #[derive(Subcommand)]
 pub enum HmacCommand {
     /// Encrypt a file with a key derived from the YubiKey HMAC response

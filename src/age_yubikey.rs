@@ -9,21 +9,29 @@
 
 use std::collections::HashSet;
 use std::fmt;
+use std::io::Read as _;
 use std::str::FromStr;
 
 use age::secrecy::ExposeSecret;
 use age::{DecryptError, EncryptError};
 use age_core::format::{FileKey, Stanza};
 use age_core::primitives::{aead_decrypt, aead_encrypt};
+use anyhow::{Context as _, anyhow};
 use base64::prelude::{BASE64_STANDARD_NO_PAD, Engine};
 use bech32::{FromBase32, ToBase32, Variant};
+use der::oid::AssociatedOid;
 use hmac::{Hmac, KeyInit, Mac};
 use p256::elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
 use p256::{EncodedPoint, PublicKey};
 use sha2::{Digest, Sha256};
+use x509_cert::attr::AttributeTypeAndValue;
+use x509_cert::ext::AsExtension;
+use x509_cert::name::{Name, RdnSequence, RelativeDistinguishedName};
+use x509_cert::serial_number::SerialNumber;
+use x509_cert::time::Validity;
 use yubikey::certificate::Certificate;
 use yubikey::piv::{self, AlgorithmId, RetiredSlotId, SlotId};
-use yubikey::{PinPolicy, Serial, TouchPolicy, YubiKey};
+use yubikey::{MgmKey, PinPolicy, Serial, TouchPolicy, YubiKey};
 
 use crate::ui;
 
@@ -71,7 +79,11 @@ fn random_scalar() -> anyhow::Result<p256::SecretKey> {
     }
 }
 
-use std::io::Read as _;
+fn random_bytes<const N: usize>() -> anyhow::Result<[u8; N]> {
+    let mut bytes = [0u8; N];
+    std::fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    Ok(bytes)
+}
 
 /// The `age1yubikey1...` recipient: a P-256 public key, compressed.
 #[derive(Clone, Debug)]
@@ -274,6 +286,21 @@ impl age::Identity for Identity {
 }
 
 impl Identity {
+    /// Builds the identity for the key certified by `cert` in the given slot.
+    pub fn from_certificate(
+        cert: &Certificate,
+        serial: Serial,
+        slot: RetiredSlotId,
+    ) -> anyhow::Result<Self> {
+        let recipient = Recipient::from_certificate(cert)
+            .ok_or_else(|| anyhow::anyhow!("slot holds no age-compatible P-256 key"))?;
+        Ok(Self {
+            serial,
+            slot,
+            tag: recipient.tag(),
+        })
+    }
+
     fn unwrap_line(&self, line: &RecipientLine) -> Result<FileKey, DecryptError> {
         let mut yk =
             YubiKey::open_by_serial(self.serial).map_err(|_| DecryptError::KeyDecryptionFailed)?;
@@ -369,6 +396,175 @@ pub(crate) fn cert_policy(cert: &Certificate) -> anyhow::Result<(PinPolicy, Touc
     Ok((pin, touch))
 }
 
+/// The Yubico PIV slot policy extension (1.3.6.1.4.1.41482.3.8): two raw
+/// bytes, the PIN policy then the touch policy. Firmware before 5.3 has no
+/// slot metadata, so the plugin stores the policies here and reads them back
+/// from the certificate.
+#[derive(Clone, Copy, Debug)]
+struct PolicyExtension {
+    pin_policy: PinPolicy,
+    touch_policy: TouchPolicy,
+}
+
+impl AssociatedOid for PolicyExtension {
+    const OID: der::asn1::ObjectIdentifier =
+        der::asn1::ObjectIdentifier::new_unwrap("1.3.6.1.4.1.41482.3.8");
+}
+
+impl der::Encode for PolicyExtension {
+    fn encoded_len(&self) -> der::Result<der::Length> {
+        der::asn1::OctetString::new([self.pin_policy.into(), self.touch_policy.into()])?
+            .encoded_len()
+    }
+
+    fn encode(&self, writer: &mut impl der::Writer) -> der::Result<()> {
+        der::asn1::OctetString::new([self.pin_policy.into(), self.touch_policy.into()])?
+            .encode(writer)
+    }
+}
+
+impl AsExtension for PolicyExtension {
+    fn critical(&self, _subject: &Name, _extensions: &[x509_cert::ext::Extension]) -> bool {
+        false
+    }
+
+    fn to_extension(
+        &self,
+        _subject: &Name,
+        _extensions: &[x509_cert::ext::Extension],
+    ) -> der::Result<x509_cert::ext::Extension> {
+        Ok(x509_cert::ext::Extension {
+            extn_id: <Self as AssociatedOid>::OID,
+            critical: false,
+            extn_value: der::asn1::OctetString::new([
+                self.pin_policy.into(),
+                self.touch_policy.into(),
+            ])?,
+        })
+    }
+}
+
+/// Subject RDNs in the DER order the plugin writes them: O, OU, CN, all as
+/// UTF8String.
+fn subject_rdns(name: &str) -> anyhow::Result<Name> {
+    subject_rdns_for("age-plugin-yubikey", env!("CARGO_PKG_VERSION"), name)
+}
+
+fn subject_rdns_for(o: &str, ou: &str, cn: &str) -> anyhow::Result<Name> {
+    let rdn = |oid: &str, value: &str| -> anyhow::Result<RelativeDistinguishedName> {
+        let atv = AttributeTypeAndValue {
+            oid: der::asn1::ObjectIdentifier::new(oid)?,
+            value: der::asn1::Any::new(der::Tag::Utf8String, value.as_bytes().to_vec())?,
+        };
+        let mut set = der::asn1::SetOfVec::new();
+        set.insert(atv)?;
+        Ok(RelativeDistinguishedName(set))
+    };
+    Ok(RdnSequence(vec![
+        rdn("2.5.4.10", o)?,
+        rdn("2.5.4.11", ou)?,
+        rdn("2.5.4.3", cn)?,
+    ]))
+}
+
+/// Generates a new P-256 age identity in a retired slot, mirroring the
+/// age-plugin-yubikey 0.5.1 generate flow (its src/builder.rs and src/key.rs):
+/// PIN verification, management key authentication with migration to a
+/// PIN-protected key, ECC P-256 key generation, and a self-signed
+/// certificate carrying the policy extension.
+pub fn generate_identity(
+    yk: &mut YubiKey,
+    slot: RetiredSlotId,
+    name: &str,
+    pin_policy: PinPolicy,
+    touch_policy: TouchPolicy,
+) -> anyhow::Result<(Identity, Recipient)> {
+    // Management operations require the PIN, and the protected management
+    // key is wrapped with it, so the PIN comes first.
+    let pin = ui::prompt_secret(&format!(
+        "Enter the PIN for YubiKey {} (echo disabled): ",
+        yk.serial()
+    ))?;
+    yk.verify_pin(pin.as_bytes())
+        .map_err(|e| anyhow!("wrong PIN: {e}"))?;
+
+    match MgmKey::get_protected(yk) {
+        Ok(mgm) => yk
+            .authenticate(mgm)
+            .map_err(|e| anyhow!("management key authentication failed: {e}"))?,
+        Err(_) => {
+            // Fall back to the default management key and migrate, exactly
+            // like the plugin does on first generation.
+            yk.authenticate(MgmKey::default()).map_err(|e| {
+                anyhow!("could not authenticate with the protected or default management key: {e}")
+            })?;
+            let mgm = MgmKey::generate();
+            mgm.set_protected(yk)
+                .context("failed to migrate to a PIN-protected management key")?;
+            ui::info("Migrated the management key to a PIN-protected one.");
+        }
+    }
+
+    if touch_policy != TouchPolicy::Never {
+        ui::info("Touch your YubiKey if it blinks");
+    }
+    let spki = piv::generate(
+        yk,
+        SlotId::Retired(slot),
+        AlgorithmId::EccP256,
+        pin_policy,
+        touch_policy,
+    )
+    .context("PIV key generation failed")?;
+
+    // The certificate signature is an operation of the fresh key: it may
+    // ask for the PIN again (policy Always) or a touch.
+    if pin_policy == PinPolicy::Always {
+        let pin = ui::prompt_secret("Enter the PIN again (echo disabled): ")?;
+        yk.verify_pin(pin.as_bytes()).context("wrong PIN")?;
+    }
+    if touch_policy != TouchPolicy::Never {
+        ui::info("Touch your YubiKey if it blinks");
+    }
+
+    let serial_number =
+        SerialNumber::new(&random_bytes::<20>()?).context("invalid certificate serial")?;
+    let validity = Validity {
+        not_before: x509_cert::time::Time::UtcTime(
+            der::asn1::UtcTime::from_system_time(std::time::SystemTime::now())
+                .context("invalid notBefore time")?,
+        ),
+        not_after: x509_cert::time::Time::INFINITY,
+    };
+    let policy = PolicyExtension {
+        pin_policy,
+        touch_policy,
+    };
+    let cert = Certificate::generate_self_signed::<_, p256::NistP256>(
+        yk,
+        SlotId::Retired(slot),
+        serial_number,
+        validity,
+        subject_rdns(name)?,
+        spki,
+        |builder| {
+            builder.add_extension(&policy).map_err(|e| match e {
+                x509_cert::builder::Error::Asn1(err) => err,
+                other => {
+                    let _ = other;
+                    der::Error::new(der::ErrorKind::Failed, der::Length::ZERO)
+                }
+            })
+        },
+    )
+    .context("failed to create and store the self-signed certificate")?;
+
+    let identity = Identity::from_certificate(&cert, yk.serial(), slot)?;
+    let recipient =
+        Recipient::from_certificate(&cert).context("the generated key is not a P-256 key")?;
+    Ok((identity, recipient))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -417,6 +613,35 @@ mod tests {
         assert!(s.starts_with(IDENTITY_STRING_PREFIX));
         assert_eq!(Identity::from_str(&s).unwrap(), identity);
         assert!(Identity::from_str("AGE-PLUGIN-YUBIKEY-1QQQQQ").is_err());
+    }
+
+    /// The subject must be DER-identical to the one the plugin writes
+    /// (O, OU, CN as UTF8String, in this order). Reference: the certificate
+    /// on YubiKey 13381487 slot 82, written by age-plugin-yubikey 0.5.0.
+    #[test]
+    fn subject_der_matches_the_plugin_certificate() {
+        use der::Encode as _;
+        let subject = subject_rdns_for("age-plugin-yubikey", "0.5.0", "yk-toolkit").unwrap();
+        let expected = concat!(
+            "3042311b3019060355040a0c126167652d706c7567696e2d797562696b6579",
+            "310e300c060355040b0c05302e352e303113301106035504030c0a796b2d746f6f6c6b6974"
+        );
+        assert_eq!(hex::encode(subject.to_der().unwrap()), expected);
+    }
+
+    /// The policy extension must carry the same OID and 2-byte value the
+    /// plugin writes (pin policy, then touch policy).
+    #[test]
+    fn policy_extension_matches_the_plugin_encoding() {
+        let ext = PolicyExtension {
+            pin_policy: PinPolicy::Once,
+            touch_policy: TouchPolicy::Cached,
+        }
+        .to_extension(&RdnSequence(vec![]), &[])
+        .unwrap();
+        assert_eq!(ext.extn_id.to_string(), "1.3.6.1.4.1.41482.3.8");
+        assert!(!ext.critical);
+        assert_eq!(hex::encode(ext.extn_value.as_bytes()), "0203");
     }
 
     #[test]
