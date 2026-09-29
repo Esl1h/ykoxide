@@ -21,6 +21,10 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v7
       - name: Install system dependencies
@@ -46,6 +50,12 @@ jobs:
           cp README.md LICENSE "$dir"/
           tar czf "${dir}.tar.gz" "$dir"
           sha256sum "${dir}.tar.gz" >> SHA256SUMS
+      # Attested in the job that built the tarball, so the provenance names
+      # the exact run and runner that produced these bytes.
+      - name: Attest build provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: ykoxide-*.tar.gz
       - uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.target }}
