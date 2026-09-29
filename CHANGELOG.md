@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- README lists the systems and keys the tool was tested on, and what was exercised on each, and gives the Arch requirements (`pcsclite` and `ccid`).
+
 ### Fixed
 
 - `fido2 enroll`, `fido2 encrypt` and `fido2 decrypt` failed with `CTAP2_ERR_UNSUPPORTED_OPTION` (0x2B) on tokens without built-in user verification, which includes the YubiKey 5 series. `enroll` now asks for the FIDO2 PIN whenever the token has one, since creating a credential needs it, and refuses `--require-pin` on a token with no PIN.

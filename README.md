@@ -66,8 +66,8 @@ Rust 1.89 or newer (install it with [rustup](https://rustup.rs)).
 ## Requirements
 
 - **Build:** the PC/SC and udev development headers. Fedora: `sudo dnf install pcsc-lite-devel systemd-devel`. Debian and Ubuntu: `sudo apt install libpcsclite-dev libudev-dev pkg-config`.
-- **Run:** the PC/SC daemon installed and running (`sudo systemctl enable --now pcscd.socket`), plus the `libpcsclite` and `libudev` shared libraries.
-- **USB access:** FIDO2 and OTP talk to the key over HID/USB. If those commands fail with a permission error, install the udev rules for security keys shipped by your distribution (for example `libu2f-udev` on Debian and Ubuntu) and re-plug the key.
+- **Run:** the PC/SC daemon installed and running (`sudo systemctl enable --now pcscd.socket`), plus the `libpcsclite` and `libudev` shared libraries. On Arch, install `pcsclite` and `ccid`: `sudo pacman -S pcsclite ccid`. On Fedora, `pcsc-lite` and `pcsc-lite-ccid`. `info`, `age` and the PIV signing mode go through PC/SC, and `backup` needs it too for the PIV and OpenPGP parts; `fido2`, `hmac` and `sign` with an `sk` key use the key over USB.
+- **USB access:** FIDO2 and OTP talk to the key over HID/USB. On Fedora and Arch that worked without extra setup. If those commands fail with a permission error on your system, install the udev rules for security keys shipped by your distribution (for example `libu2f-udev` on Debian and Ubuntu) and re-plug the key.
 - **Touch:** OTP, FIDO2 and SSH `sk` operations wait for a touch. The key blinks while it waits.
 
 ## Quick start
@@ -167,10 +167,14 @@ Dumps the device state (serial, firmware, form factor, enabled applets over USB/
 
 ykoxide is pre-1.0. The command line and the newer file formats may still change; release notes call out breaking changes.
 
-- **Tested hardware:** one YubiKey 5 NFC (firmware 5.2.6) on Fedora, x86_64, and a YubiKey 5C (firmware 5.4.3) for FIDO2. Other models and operating systems are untested.
-- **Checked against the reference tools on that key:** age files interoperate with `age-plugin-yubikey` in both directions; the HMAC response matches `ykman otp calculate`; legacy `.yk.enc` files from the shell toolkit decrypt; SSHSIG signatures verify with `ssh-keygen -Y verify`; the device fields of `backup` match `ykman`.
+- **Tested systems:** Fedora 44 and Omarchy 4.0.3 (Arch-based), both x86_64. Other distributions and CPU architectures are untested.
+- **Tested keys:** a YubiKey 5 NFC (USB-A, firmware 5.2.6) and a YubiKey 5C (USB-C, firmware 5.4.3). Other models are untested.
+- **YubiKey 5 NFC:** on both systems, `info`, `backup`, age encrypt and decrypt with the PIV slot 82 identity, HMAC on OTP slot 2 and SSHSIG with an `sk` key. The FIDO2 round trip was run on Omarchy.
+- **YubiKey 5C:** on both systems, `info`, `backup` and the FIDO2 round trip; SSHSIG with an `sk` key on Omarchy. Its OTP slot 2 is not configured and it holds no age identity, so HMAC and age were not run on it.
+- **Checked against the reference tools (YubiKey 5 NFC, Fedora):** age files interoperate with `age-plugin-yubikey` in both directions; the HMAC response matches `ykman otp calculate`; legacy `.yk.enc` files from the shell toolkit decrypt; SSHSIG signatures verify with `ssh-keygen -Y verify`; the device fields of `backup` match `ykman`.
+- **Not exercised on hardware:** generating a new PIV key with `age setup --generate`; only extracting an existing identity was.
 - **aarch64:** release binaries are built and tested in CI on a native ARM runner, but have not been run against a key.
-- **FIDO2 is experimental:** enroll, encrypt, `verify` and decrypt work end to end on one YubiKey 5C (firmware 5.4.3). It has not been tried on a Security Key or on a token with built-in user verification such as a fingerprint reader. The file format is specific to `ykox` and is not interoperable with `age-plugin-fido2-hmac`; it may change before 1.0.
+- **FIDO2 is experimental:** enroll, encrypt, `verify` and decrypt work end to end on both keys, from version 0.1.2 on (earlier releases cannot enroll on these tokens). It has not been tried on a Security Key or on a token with built-in user verification such as a fingerprint reader. The file format is specific to `ykox` and is not interoperable with `age-plugin-fido2-hmac`; it may change before 1.0.
 
 ## Security
 
