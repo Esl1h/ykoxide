@@ -1,25 +1,88 @@
 # ykoxide
 
-YubiKey toolkit in Rust: age encryption on a PIV slot, HMAC challenge-response file encryption, SSHSIG file signing, device info and config backup, shipped as a single binary (`ykox`) with no runtime dependency on `ykman`, `age` or `openssl`.
+[![CI](https://github.com/Esl1h/ykoxide/actions/workflows/ci.yml/badge.svg)](https://github.com/Esl1h/ykoxide/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Esl1h/ykoxide)](https://github.com/Esl1h/ykoxide/releases/latest)
+[![crates.io](https://img.shields.io/crates/v/ykoxide)](https://crates.io/crates/ykoxide)
+[![MSRV](https://img.shields.io/crates/msrv/ykoxide)](Cargo.toml)
+[![License: MIT](https://img.shields.io/github/license/Esl1h/ykoxide)](LICENSE)
 
-Rust rewrite of [yubikey-shell-toolkit](https://github.com/Esl1h/yubikey-shell-toolkit).
+YubiKey toolkit in Rust, shipped as a single binary (`ykox`) with no runtime dependency on `ykman`, `age` or `openssl`:
 
-## Build
+- age encryption on a PIV slot, interoperable with `age-plugin-yubikey`
+- file encryption with the OTP HMAC-SHA1 challenge-response slot
+- FIDO2 `hmac-secret` file encryption (experimental)
+- SSHSIG file signing and verification, with FIDO2 (`sk`) keys or a PIV slot
+- device report and configuration backup as JSON
 
-Requires the Rust toolchain (via rustup) and the PC/SC development headers.
+Rust rewrite of [yubikey-shell-toolkit](https://github.com/Esl1h/yubikey-shell-toolkit); it reads the files and configuration that toolkit created.
+
+## Contents
+
+- [Install](#install)
+- [Requirements](#requirements)
+- [Quick start](#quick-start)
+- [Commands](#commands)
+- [Status and compatibility](#status-and-compatibility)
+- [Security](#security)
+- [Configuration files](#configuration-files)
+- [Contributing](#contributing)
+- [License and credits](#license-and-credits)
+
+## Install
+
+### Prebuilt binaries
+
+Linux x86_64 and aarch64 tarballs are attached to every [release](https://github.com/Esl1h/ykoxide/releases). Each release lists SHA256SUMS, and releases from 0.1.1 on also carry a build provenance attestation.
 
 ```sh
-sudo dnf install rustup pcsc-lite-devel   # Fedora
-rustup-init -y
+VERSION=0.1.1
+TARGET=x86_64-unknown-linux-gnu   # or aarch64-unknown-linux-gnu
+gh release download "v$VERSION" --repo Esl1h/ykoxide \
+  --pattern "ykoxide-$VERSION-$TARGET.tar.gz" --pattern SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS
+gh attestation verify "ykoxide-$VERSION-$TARGET.tar.gz" --repo Esl1h/ykoxide
+tar xzf "ykoxide-$VERSION-$TARGET.tar.gz"
+install -m 0755 "ykoxide-$VERSION-$TARGET/ykox" ~/.local/bin/ykox
+```
+
+### From crates.io
+
+```sh
+cargo install ykoxide --locked   # builds from source, needs the build dependencies below
+cargo binstall ykoxide           # downloads the release binary instead
+```
+
+### From source
+
+```sh
+git clone https://github.com/Esl1h/ykoxide
+cd ykoxide
 cargo build --release
 ./target/release/ykox --help
 ```
 
-`pcscd` must be running to talk to the YubiKey. The FIDO2 and OTP HID operations need `libudev` (installed with `systemd-devel` on Fedora).
+Rust 1.89 or newer (install it with [rustup](https://rustup.rs)).
+
+## Requirements
+
+- **Build:** the PC/SC and udev development headers. Fedora: `sudo dnf install pcsc-lite-devel systemd-devel`. Debian and Ubuntu: `sudo apt install libpcsclite-dev libudev-dev pkg-config`.
+- **Run:** the PC/SC daemon installed and running (`sudo systemctl enable --now pcscd.socket`), plus the `libpcsclite` and `libudev` shared libraries.
+- **USB access:** FIDO2 and OTP talk to the key over HID/USB. If those commands fail with a permission error, install the udev rules for security keys shipped by your distribution (for example `libu2f-udev` on Debian and Ubuntu) and re-plug the key.
+- **Touch:** OTP, FIDO2 and SSH `sk` operations wait for a touch. The key blinks while it waits.
+
+## Quick start
+
+```sh
+ykox info                        # is the key detected?
+ykox age setup                   # extract (or generate) the age identity on the key
+ykox age encrypt secret.txt      # secret.txt.age
+ykox age decrypt secret.txt.age
+ykox sign report.pdf             # report.pdf.sig, verifiable with ssh-keygen -Y verify
+```
 
 ## Commands
 
-Every device-touching command accepts a global `--serial <N>` to pick the YubiKey when more than one is connected.
+Every device-touching command accepts a global `--serial <N>` to pick the YubiKey when more than one is connected. It does not apply to FIDO2, whose HID interface reports no serial.
 
 ### info
 
@@ -58,7 +121,7 @@ The legacy `.yk.enc` format is unauthenticated: a wrong key passes about 1 time 
 
 ### fido2
 
-File encryption with a FIDO2 `hmac-secret` credential, for keys without PIV or OTP (works on the Security Key line):
+Experimental. File encryption with a FIDO2 `hmac-secret` credential, meant for keys without PIV or OTP such as the Security Key line (not yet tested on one). See [Status and compatibility](#status-and-compatibility).
 
 ```sh
 ykox fido2 enroll                     # create the credential (one time, adds it to the token)
@@ -100,6 +163,25 @@ ykox backup -o yubikey.json
 
 Dumps the device state (serial, firmware, form factor, enabled applets over USB/NFC, PIV slots, OTP slot state, FIDO2 capabilities including AAGUID and PIN retries, OpenPGP fingerprints) as JSON. Never includes secrets.
 
+## Status and compatibility
+
+ykoxide is pre-1.0. The command line and the newer file formats may still change; release notes call out breaking changes.
+
+- **Tested hardware:** one YubiKey 5 NFC (firmware 5.2.6) on Fedora, x86_64. Other models and operating systems are untested.
+- **Checked against the reference tools on that key:** age files interoperate with `age-plugin-yubikey` in both directions; the HMAC response matches `ykman otp calculate`; legacy `.yk.enc` files from the shell toolkit decrypt; SSHSIG signatures verify with `ssh-keygen -Y verify`; the device fields of `backup` match `ykman`.
+- **aarch64:** release binaries are built and tested in CI on a native ARM runner, but have not been run against a key.
+- **FIDO2 is experimental:** the code is covered by tests that run without hardware, but `fido2 enroll` and the encrypt/decrypt round trip have not been validated on a real token yet. The file format is specific to `ykox` and is not interoperable with `age-plugin-fido2-hmac`; it may change before 1.0.
+
+## Security
+
+- PINs and passphrases are read without echo and zeroized after use. `backup` never includes secrets.
+- `sign` refuses RSA keys. `cargo audit` ignores `RUSTSEC-2023-0071` (`rsa`, pulled in by the `yubikey` crate) on purpose: `ykox` performs no RSA operation, so the vulnerable path is unreachable (see `.cargo/audit.toml`).
+- The legacy `.yk.enc` format has no authentication (see [hmac](#hmac)). Prefer the `.yk.age` formats.
+- `ykox` protects the key material, not the plaintext: it does not defend against malware on the host that reads decrypted files.
+- CI runs `cargo audit` and `cargo deny`, and CodeQL scans the repository. Release tags are GPG-signed, and release tarballs come with SHA256SUMS and, from 0.1.1, a build provenance attestation.
+
+To report a vulnerability, follow [SECURITY.md](SECURITY.md). Please do not open a public issue for it.
+
 ## Configuration files
 
 `~/.config/yk-toolkit/age/`:
@@ -110,6 +192,12 @@ Dumps the device state (serial, firmware, form factor, enabled applets over USB/
 
 `~/.config/yk-toolkit/fido2/credential.json`: written by `fido2 enroll` (0600), the default credential for `fido2 encrypt`.
 
-## License
+## Contributing
 
-MIT
+Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md). Changes are listed in [CHANGELOG.md](CHANGELOG.md).
+
+## License and credits
+
+[MIT](LICENSE).
+
+ykoxide builds on the work of these projects: the [`age`](https://github.com/str4d/rage) crate, [`age-plugin-yubikey`](https://github.com/str4d/age-plugin-yubikey) (the piv-p256 format it interoperates with), the [`yubikey`](https://github.com/iqlusioninc/yubikey.rs) crate for PIV, [`ctap-hid-fido2`](https://github.com/gebogebogebo/ctap-hid-fido2) for FIDO2, [`ssh-key`](https://github.com/RustCrypto/SSH) for SSHSIG and [`nusb`](https://github.com/kevinmehall/nusb) for USB access.
