@@ -4,9 +4,13 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Advisories appear without any push, so audit and deny also run weekly.
+  schedule:
+    - cron: "23 5 * * 1"
 
 jobs:
   build:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
