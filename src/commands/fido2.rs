@@ -48,7 +48,14 @@ struct SidecarFile {
 }
 
 pub fn enroll(rp_id: &str, require_pin: bool, force: bool) -> Result<()> {
-    let pin = if require_pin {
+    // `require_pin` is the policy for later derivations. Creating the
+    // credential needs the PIN on any token that has one, so ask for it here
+    // regardless.
+    let has_pin = fido2::has_pin()?;
+    if require_pin && !has_pin {
+        bail!("--require-pin needs a FIDO2 PIN and this token has none set; set one first");
+    }
+    let pin = if has_pin {
         Some(ui::prompt_secret("FIDO2 PIN (echo disabled): ")?)
     } else {
         None
