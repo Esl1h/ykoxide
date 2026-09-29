@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-29
+
 No changes to the `ykox` binary itself: this release is about packaging, documentation and supply chain.
 
 ### Added
@@ -34,5 +36,6 @@ First release: Linux x86_64 and aarch64 binaries with SHA256SUMS.
 - `sign` and `verify-sig`: SSHSIG signatures with ed25519, ecdsa or ed25519-sk keys (passphrase-protected keys supported) or a PIV slot. RSA keys are refused.
 - `backup`: device state as JSON, including AAGUID, FIDO2 PIN retries and OTP slot state.
 
-[Unreleased]: https://github.com/Esl1h/ykoxide/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Esl1h/ykoxide/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/Esl1h/ykoxide/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Esl1h/ykoxide/releases/tag/v0.1.0

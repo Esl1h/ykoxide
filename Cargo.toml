@@ -1,6 +1,6 @@
 [package]
 name = "ykoxide"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.89"
 description = "YubiKey toolkit: age, PIV, FIDO2 and challenge-response file encryption and SSH signing in a single binary"
