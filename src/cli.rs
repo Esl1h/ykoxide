@@ -24,6 +24,9 @@ pub enum Command {
     /// File encryption using the OTP HMAC-SHA1 challenge-response slot
     #[command(subcommand)]
     Hmac(HmacCommand),
+    /// File encryption backed by a FIDO2 hmac-secret credential
+    #[command(subcommand)]
+    Fido2(Fido2Command),
     /// Check that an encrypted file can be decrypted, without writing plaintext
     Verify {
         file: PathBuf,
@@ -136,6 +139,37 @@ pub enum HmacCommand {
         file: PathBuf,
         #[command(flatten)]
         slot: Slot,
+        #[command(flatten)]
+        out: Output,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum Fido2Command {
+    /// Create a FIDO2 credential for hmac-secret derivation
+    ///
+    /// Adds a credential to the token (kept even if the configuration file
+    /// is deleted). The default RP ID is the one age-plugin-fido2-hmac uses.
+    Enroll {
+        /// Relying party ID stored with the credential
+        #[arg(long, default_value = "age-encryption.org")]
+        rp_id: String,
+        /// Require the FIDO2 PIN on every derivation (without it, only touch)
+        #[arg(long)]
+        require_pin: bool,
+        /// Overwrite the stored credential configuration
+        #[arg(long)]
+        force: bool,
+    },
+    /// Encrypt a file with a key derived from the FIDO2 credential
+    Encrypt {
+        file: PathBuf,
+        #[command(flatten)]
+        out: Output,
+    },
+    /// Decrypt a file produced by `fido2 encrypt`
+    Decrypt {
+        file: PathBuf,
         #[command(flatten)]
         out: Output,
     },
