@@ -26,6 +26,27 @@ jobs:
       - name: Test
         run: cargo test
 
+  # rust-version in Cargo.toml is a promise to users; this keeps it true.
+  msrv:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpcsclite-dev libudev-dev pkg-config
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv
+      - name: Read the minimum supported Rust version
+        id: msrv
+        run: echo "version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].rust_version')" >> "$GITHUB_OUTPUT"
+      - name: Build on that toolchain
+        run: |
+          rustup toolchain install "${{ steps.msrv.outputs.version }}" --profile minimal
+          cargo "+${{ steps.msrv.outputs.version }}" check --locked
+
   audit:
     runs-on: ubuntu-latest
     steps:
