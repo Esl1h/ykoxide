@@ -3180,6 +3180,7 @@ dependencies = [
  "dirs",
  "hex",
  "hmac 0.13.0",
+ "nusb",
  "p256",
  "pbkdf2 0.13.0",
  "pcsc",

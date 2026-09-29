@@ -49,6 +49,8 @@ pub struct Fido2Section {
     pub versions: Option<Vec<String>>,
     pub extensions: Option<Vec<String>>,
     pub options: Option<Vec<(String, bool)>>,
+    pub aaguid: Option<String>,
+    pub pin_retries: Option<i32>,
     pub resident_credentials_count: Option<u64>,
 }
 
@@ -140,7 +142,9 @@ pub fn run(serial: Option<yubikey::Serial>, out: &Output) -> Result<()> {
         }
     };
     let _ = card.disconnect(pcsc::Disposition::LeaveCard);
-    // FIDO2 via HID.
+    // The OTP read must happen before any FIDO2 traffic: after a CTAP2
+    // exchange the device ignores OTP frames for a few seconds.
+    let otp = read_otp_info(serial);
     let fido2 = read_fido2_info();
 
     let backup = Backup {
@@ -154,12 +158,7 @@ pub fn run(serial: Option<yubikey::Serial>, out: &Output) -> Result<()> {
             nfc_enabled: device_info.as_ref().map(|d| d.nfc_enabled.clone()),
         },
         piv: piv_slots,
-        // The OTP slot state lives behind the OTP HID feature report
-        // protocol, which is not implemented; ykman reads it over HID too.
-        otp: OtpSection {
-            slot1_configured: None,
-            slot2_configured: None,
-        },
+        otp,
         fido2,
         openpgp: OpenPgpSection {
             fingerprints: openpgp_status.as_ref().map(|s| Fingerprints {
@@ -194,15 +193,34 @@ fn read_fido2_info() -> Fido2Section {
     cfg.enable_log = false;
     // The YubiKey FIDO HID interface reports an empty serial number, so the
     // device cannot be matched to --serial; take the only one connected.
-    let open = FidoKeyHidFactory::create(&cfg);
+    let device = match FidoKeyHidFactory::create(&cfg) {
+        Ok(device) => device,
+        Err(err) => {
+            ui::warn(format!("failed to open the FIDO2 device: {err:#}"));
+            return empty_fido2();
+        }
+    };
 
-    match open.and_then(|device| device.get_info()) {
-        Ok(info) => Fido2Section {
-            versions: Some(info.versions),
-            extensions: Some(info.extensions),
-            options: Some(info.options),
-            resident_credentials_count: None,
-        },
+    match device.get_info() {
+        Ok(info) => {
+            // Reading the retries does not require the PIN; it fails on
+            // tokens without a PIN configured and stays null there.
+            let pin_retries = match device.get_pin_retries() {
+                Ok(retries) => Some(retries),
+                Err(err) => {
+                    ui::warn(format!("failed to read the FIDO2 PIN retries: {err:#}"));
+                    None
+                }
+            };
+            Fido2Section {
+                versions: Some(info.versions),
+                extensions: Some(info.extensions),
+                options: Some(info.options),
+                aaguid: Some(format_aaguid(&info.aaguid)),
+                pin_retries,
+                resident_credentials_count: None,
+            }
+        }
         Err(err) => {
             ui::warn(format!("failed to read the FIDO2 info: {err:#}"));
             empty_fido2()
@@ -215,6 +233,40 @@ fn empty_fido2() -> Fido2Section {
         versions: None,
         extensions: None,
         options: None,
+        aaguid: None,
+        pin_retries: None,
         resident_credentials_count: None,
+    }
+}
+
+/// Formats the AAGUID as the canonical hyphenated UUID.
+fn format_aaguid(bytes: &[u8]) -> String {
+    let h = hex::encode(bytes);
+    if h.len() != 32 {
+        return h;
+    }
+    format!(
+        "{}-{}-{}-{}-{}",
+        &h[0..8],
+        &h[8..12],
+        &h[12..16],
+        &h[16..20],
+        &h[20..32]
+    )
+}
+
+fn read_otp_info(serial: Option<yubikey::Serial>) -> OtpSection {
+    match device::otp::slot_status(serial.map(|s| s.0)) {
+        Ok(status) => OtpSection {
+            slot1_configured: Some(status.slot1_configured),
+            slot2_configured: Some(status.slot2_configured),
+        },
+        Err(err) => {
+            ui::warn(format!("failed to read the OTP slot status: {err:#}"));
+            OtpSection {
+                slot1_configured: None,
+                slot2_configured: None,
+            }
+        }
     }
 }
